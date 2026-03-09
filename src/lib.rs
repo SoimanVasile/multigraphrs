@@ -1,8 +1,12 @@
-use std::{collections::HashMap, hash::Hash, marker::PhantomData, ops::Mul};
+use std::{collections::HashMap, hash::Hash, marker::PhantomData};
 mod edge;
 mod direction_strategy;
 use direction_strategy::{DirectionStrategy, Weighted, Directed};
 use edge::Edge;
+
+use crate::graph_errors::GraphErrors;
+
+mod graph_errors;
 
 
 pub struct MultiGraph<K, W, S:DirectionStrategy<K, W>>
@@ -22,8 +26,8 @@ where
     pub fn new() -> MultiGraph<K, W, Weighted>{
         MultiGraph::<K, W, Weighted> { adjacency_list: HashMap::new(), _strategy: PhantomData}
     }
-    pub fn add_edge(&mut self, source: K, target: K, weight: W){
-        Weighted::add_edge(&mut self.adjacency_list, source, target, weight);
+    pub fn add_edge(&mut self, source: &K, target: &K, weight: &W) -> Result<Vec<Edge<K, W>>, GraphErrors>{
+        Weighted::add_edge(&mut self.adjacency_list, source, target, weight)
     }
 }
 
@@ -34,8 +38,9 @@ where
     pub fn new() -> MultiGraph<K, u32, Directed>{
         MultiGraph { adjacency_list: HashMap::new(), _strategy:  PhantomData}
     }
-    pub fn add_edge(&mut self, source: K, target: K){
-        Directed::add_edge(&mut self.adjacency_list, source, target, 1);
+
+    pub fn add_edge(&mut self, source: K, target: K) -> Result<Vec<Edge<K, u32>>, GraphErrors>{
+        Directed::add_edge(&mut self.adjacency_list, &source, &target, &1)
     }
 }
 
