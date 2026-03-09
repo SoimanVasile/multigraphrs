@@ -1,11 +1,11 @@
-use std::{collections::HashMap, hash::Hash, marker::PhantomData};
+use std::{collections::HashMap, hash::Hash, marker::PhantomData, ops::Mul};
 mod edge;
 mod direction_strategy;
-use direction_strategy::{WeightedStrategy, NonWeightedStrategy, Weighted, Directed};
+use direction_strategy::{DirectionStrategy, Weighted, Directed};
 use edge::Edge;
 
 
-pub struct MultiGraph<K, W, S:WeightedStrategy<K, W>>
+pub struct MultiGraph<K, W, S:DirectionStrategy<K, W>>
 where
     K: Eq + Hash + Clone,
     W: Eq + Hash + Clone,
@@ -14,22 +14,28 @@ where
     pub _strategy: PhantomData<S>,
 }
 
-pub struct MultiGraph<K, W, S:NonWeightedStrategy<K, W>>
-{
-
-}
-
-impl<K, W, S> MultiGraph<K, W, S>
+impl<K, W> MultiGraph<K, W, Weighted>
 where
     K: Eq + Hash + Clone,
     W: Eq + Hash + Clone,
-    S: WeightedStrategy<K, W>,
 {
-    pub fn new() -> MultiGraph<K, W, S>{
-        MultiGraph::<K, W, S> { adjacency_list: HashMap::new(), _strategy: PhantomData::<S>}
+    pub fn new() -> MultiGraph<K, W, Weighted>{
+        MultiGraph::<K, W, Weighted> { adjacency_list: HashMap::new(), _strategy: PhantomData}
     }
     pub fn add_edge(&mut self, source: K, target: K, weight: W){
-        S::add_edge(&mut self.adjacency_list, source, target, weight);
+        Weighted::add_edge(&mut self.adjacency_list, source, target, weight);
+    }
+}
+
+impl<K> MultiGraph<K, u32, Directed>
+where
+    K: Eq + Hash + Clone,
+{
+    pub fn new() -> MultiGraph<K, u32, Directed>{
+        MultiGraph { adjacency_list: HashMap::new(), _strategy:  PhantomData}
+    }
+    pub fn add_edge(&mut self, source: K, target: K){
+        Directed::add_edge(&mut self.adjacency_list, source, target, 1);
     }
 }
 
