@@ -36,6 +36,17 @@ where
     pub fn add_edge(&mut self, source: &K, target: &K, weight: &W) -> Result<Vec<Edge<K, W>>, GraphErrors>{
         Weighted::add_edge(&mut self.adjacency_list, source, target, weight)
     }
+
+
+    pub fn add_node(&mut self, node: &K) -> Result<K, GraphErrors>
+    where K: Eq + Hash + Clone,{
+        if !self.adjacency_list.contains_key(node){
+            return Err(GraphErrors::NodeAlreadyExists);
+        }
+
+        self.adjacency_list.entry(node.clone()).or_default();
+        return Ok(node.clone())
+    }
 }
 
 impl<K, W> MultiGraph<K, W, WeightedDirected>
@@ -50,6 +61,16 @@ where
     pub fn add_edge(&mut self, source: &K, target: &K, weight: &W) -> Result<Vec<Edge<K, W>>, GraphErrors>{
         WeightedDirected::add_edge(&mut self.adjacency_list, source, target, weight)
     }
+
+    pub fn add_node(&mut self, node: &K) -> Result<K, GraphErrors>
+    where K: Eq + Hash + Clone,{
+        if !self.adjacency_list.contains_key(node){
+            return Err(GraphErrors::NodeAlreadyExists);
+        }
+
+        self.adjacency_list.entry(node.clone()).or_default();
+        return Ok(node.clone())
+    }
 }
 
 impl<K> MultiGraph<K, u32, Directed>
@@ -63,6 +84,16 @@ where
     pub fn add_edge(&mut self, source: &K, target: &K) -> Result<Vec<Edge<K, u32>>, GraphErrors>{
         Directed::add_edge(&mut self.adjacency_list, source, target, &1)
     }
+
+    pub fn add_node(&mut self, node: &K) -> Result<K, GraphErrors>
+    where K: Eq + Hash + Clone,{
+        if !self.adjacency_list.contains_key(node){
+            return Err(GraphErrors::NodeAlreadyExists);
+        }
+
+        self.adjacency_list.entry(node.clone()).or_default();
+        return Ok(node.clone())
+    }
 }
 
 impl<K> MultiGraph<K, u32, Undirected>
@@ -74,5 +105,15 @@ where
     }
     pub fn add_edge(&mut self, source: &K, target: &K) -> Result<Vec<Edge<K, u32>>, GraphErrors>{
         Undirected::add_edge(&mut self.adjacency_list, source, target, &1)
+    }
+
+    pub fn add_node(&mut self, node: &K) -> Result<K, GraphErrors>
+    where K: Eq + Hash + Clone,{
+        if !self.adjacency_list.contains_key(node){
+            return Err(GraphErrors::NodeAlreadyExists);
+        }
+
+        self.adjacency_list.entry(node.clone()).or_default();
+        return Ok(node.clone())
     }
 }
