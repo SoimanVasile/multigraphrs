@@ -2,5 +2,10 @@
 name = "multigraphrs"
 version = "0.1.0"
 edition = "2024"
+authors = ["Your Name <your.email@example.com>"]
+description = "A versatile, strategy-pattern based MultiGraph library supporting directed, undirected, and weighted graphs."
+license = "MIT"
+repository = "https://github.com/yourusername/multigraphrs"
+readme = "README.md"
 
 [dependencies]
