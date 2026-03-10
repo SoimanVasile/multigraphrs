@@ -30,13 +30,13 @@ where
     W: Eq + Hash + Clone,
     S: DirectionStrategy<K, W>,
 {
-    pub fn add_node(&mut self,  source: &K) -> Result<K, GraphErrors>{
-        if self.adjacency_list.contains_key(source) {
+    pub fn add_node(&mut self,  source: K) -> Result<K, GraphErrors>{
+        if self.adjacency_list.contains_key(&source) {
             return Err(GraphErrors::NodeAlreadyExists);
         }
         
         self.adjacency_list.entry(source.clone()).or_default();
-        Ok(source.clone())
+        Ok(source)
     }
 }
 
@@ -48,8 +48,8 @@ where
     pub fn new() -> MultiGraph<K, W, Weighted>{
         MultiGraph::<K, W, Weighted> { adjacency_list: HashMap::new(), _strategy: PhantomData}
     }
-    pub fn add_edge(&mut self, source: &K, target: &K, weight: &W) -> Result<Vec<Edge<K, W>>, GraphErrors>{
-        Weighted::add_edge(&mut self.adjacency_list, source, target, weight)
+    pub fn add_edge(&mut self, source: K, target: K, weight: W) -> Result<Vec<Edge<K, W>>, GraphErrors>{
+        Weighted::add_edge(&mut self.adjacency_list, &source, &target, &weight)
     }
 
 }
@@ -63,8 +63,8 @@ where
         MultiGraph { adjacency_list: HashMap::new(), _strategy: PhantomData}
     }
 
-    pub fn add_edge(&mut self, source: &K, target: &K, weight: &W) -> Result<Vec<Edge<K, W>>, GraphErrors>{
-        WeightedDirected::add_edge(&mut self.adjacency_list, source, target, weight)
+    pub fn add_edge(&mut self, source: K, target: K, weight: W) -> Result<Vec<Edge<K, W>>, GraphErrors>{
+        WeightedDirected::add_edge(&mut self.adjacency_list, &source, &target, &weight)
     }
 }
 
@@ -76,8 +76,8 @@ where
         MultiGraph { adjacency_list: HashMap::new(), _strategy:  PhantomData}
     }
 
-    pub fn add_edge(&mut self, source: &K, target: &K) -> Result<Vec<Edge<K, u32>>, GraphErrors>{
-        Directed::add_edge(&mut self.adjacency_list, source, target, &1)
+    pub fn add_edge(&mut self, source: K, target: K) -> Result<Vec<Edge<K, u32>>, GraphErrors>{
+        Directed::add_edge(&mut self.adjacency_list, &source, &target, &1)
     }
 
 }
@@ -89,8 +89,8 @@ where
     pub fn new() -> MultiGraph<K, u32, Undirected>{
         MultiGraph { adjacency_list: HashMap::new(), _strategy: PhantomData}
     }
-    pub fn add_edge(&mut self, source: &K, target: &K) -> Result<Vec<Edge<K, u32>>, GraphErrors>{
-        Undirected::add_edge(&mut self.adjacency_list, source, target, &1)
+    pub fn add_edge(&mut self, source: K, target: K) -> Result<Vec<Edge<K, u32>>, GraphErrors>{
+        Undirected::add_edge(&mut self.adjacency_list, &source, &target, &1)
     }
 
 }
