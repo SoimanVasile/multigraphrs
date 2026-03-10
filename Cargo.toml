@@ -1,6 +1,6 @@
 [package]
 name = "multigraphrs"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 authors = ["Șoiman Vasile-Cristian <vasilecristiansoiman@gmail.com"]
 description = "A versatile, strategy-pattern based MultiGraph library supporting directed, undirected, and weighted graphs."
