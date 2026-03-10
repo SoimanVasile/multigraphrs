@@ -1,0 +1,14 @@
+```rust
+multigraphrs::edge
+```
+
+```rust
+pub struct Edge<K, W>
+where
+    K: Eq + Hash + Clone,
+    W: Eq + Hash + Clone,
+{
+    pub target: K,
+    pub weight: W,
+}
+```
