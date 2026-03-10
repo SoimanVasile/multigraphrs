@@ -4,6 +4,16 @@
 [![Build Status](https://github.com/yourusername/multigraphrs/actions/workflows/rust.yml/badge.svg)](https://github.com/yourusername/multigraphrs/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+> ⚠️ **Note: Early Development**
+> 
+> This project is currently in its early stages of development. The core architecture is functional, but **major breaking changes** to the API may still occur. 
+> 
+> **Current Roadmap:**
+> * **API Simplification**: Modifying the constructor for non-weighted graphs (like `Directed` and `Undirected`) so they only require two generic parameters (Node Type and Strategy) instead of three.
+> * **Graph Traversal**: Implementing algorithms like Breadth-First Search (BFS) and Depth-First Search (DFS).
+> * **General Improvements**: Adding more convenience methods and making the overall API more user-friendly. 
+> 
+> Feedback, ideas, and contributions are always welcome!
 `multigraphrs` is a versatile, modular, and type-safe graph data structure library for Rust. 
 
 Instead of implementing separate structs for Directed, Undirected, Weighted, and Unweighted graphs, `multigraphrs` leverages the **Strategy Pattern**. A single `MultiGraph` core data structure adapts its behavior at compile-time based on the strategy provided.
@@ -32,11 +42,10 @@ You can easily instantiate entirely different types of graphs just by swapping o
 use multigraphrs::{MultiGraph, Directed, Weighted};
 
 fn main() {
-    // ==========================================
-    // Example 1: Unweighted Directed Graph
-    // ==========================================
+    //this creates the MultiGraph that has nodes as str, weights as u32 and is directed
     let mut dir_graph = MultiGraph::<&str, u32, Directed>::new();
     
+    //add the nodes in the multigraph
     dir_graph.add_node("New York").unwrap();
     dir_graph.add_node("London").unwrap();
     
@@ -44,9 +53,6 @@ fn main() {
     dir_graph.add_edge("New York", "London").unwrap();
     println!("Created a directed edge from New York to London!");
 
-    // ==========================================
-    // Example 2: Weighted Undirected Graph
-    // ==========================================
     // Nodes are `u32` (IDs) and weights are `f64` (distances)
     let mut weight_graph = MultiGraph::<u32, f64, Weighted>::new();
     
