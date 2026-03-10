@@ -1,9 +1,9 @@
-mod edge;
-mod direction_strategy;
-mod directed;
-mod weighted;
-mod undirected;
-mod weighted_directed;
+pub mod edge;
+pub mod direction_strategy;
+pub mod directed;
+pub mod weighted;
+pub mod undirected;
+pub mod weighted_directed;
 
 use direction_strategy::DirectionStrategy;
 use directed::Directed;
@@ -24,6 +24,21 @@ where
     pub adjacency_list: HashMap<K, Vec<Edge<K, W>>>,
     pub _strategy: PhantomData<S>,
 }
+impl<K, W, S> MultiGraph<K, W, S>
+where
+    K: Eq + Hash + Clone,
+    W: Eq + Hash + Clone,
+    S: DirectionStrategy<K, W>,
+{
+    pub fn add_node(&mut self,  source: &K) -> Result<K, GraphErrors>{
+        if self.adjacency_list.contains_key(source) {
+            return Err(GraphErrors::NodeAlreadyExists);
+        }
+        
+        self.adjacency_list.entry(source.clone()).or_default();
+        Ok(source.clone())
+    }
+}
 
 impl<K, W> MultiGraph<K, W, Weighted>
 where
@@ -37,16 +52,6 @@ where
         Weighted::add_edge(&mut self.adjacency_list, source, target, weight)
     }
 
-
-    pub fn add_node(&mut self, node: &K) -> Result<K, GraphErrors>
-    where K: Eq + Hash + Clone,{
-        if !self.adjacency_list.contains_key(node){
-            return Err(GraphErrors::NodeAlreadyExists);
-        }
-
-        self.adjacency_list.entry(node.clone()).or_default();
-        return Ok(node.clone())
-    }
 }
 
 impl<K, W> MultiGraph<K, W, WeightedDirected>
@@ -60,16 +65,6 @@ where
 
     pub fn add_edge(&mut self, source: &K, target: &K, weight: &W) -> Result<Vec<Edge<K, W>>, GraphErrors>{
         WeightedDirected::add_edge(&mut self.adjacency_list, source, target, weight)
-    }
-
-    pub fn add_node(&mut self, node: &K) -> Result<K, GraphErrors>
-    where K: Eq + Hash + Clone,{
-        if !self.adjacency_list.contains_key(node){
-            return Err(GraphErrors::NodeAlreadyExists);
-        }
-
-        self.adjacency_list.entry(node.clone()).or_default();
-        return Ok(node.clone())
     }
 }
 
@@ -85,15 +80,6 @@ where
         Directed::add_edge(&mut self.adjacency_list, source, target, &1)
     }
 
-    pub fn add_node(&mut self, node: &K) -> Result<K, GraphErrors>
-    where K: Eq + Hash + Clone,{
-        if !self.adjacency_list.contains_key(node){
-            return Err(GraphErrors::NodeAlreadyExists);
-        }
-
-        self.adjacency_list.entry(node.clone()).or_default();
-        return Ok(node.clone())
-    }
 }
 
 impl<K> MultiGraph<K, u32, Undirected>
@@ -107,13 +93,4 @@ where
         Undirected::add_edge(&mut self.adjacency_list, source, target, &1)
     }
 
-    pub fn add_node(&mut self, node: &K) -> Result<K, GraphErrors>
-    where K: Eq + Hash + Clone,{
-        if !self.adjacency_list.contains_key(node){
-            return Err(GraphErrors::NodeAlreadyExists);
-        }
-
-        self.adjacency_list.entry(node.clone()).or_default();
-        return Ok(node.clone())
-    }
 }
