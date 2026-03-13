@@ -80,12 +80,20 @@ where
         Ok(source)
     }
 
-    pub fn iter(&mut self) -> Iter<'_, K, Vec<Edge<K, W>>>{
+    pub fn iter(&mut self) ->Iter<'_, K, Vec<Edge<K, W>>>{
         self.adjacency_list.iter()
     }
 
     pub fn iter_mut(&mut self) -> IterMut<'_, K, Vec<Edge<K, W>>>{
         self.adjacency_list.iter_mut()
+    }
+
+    pub fn check_grade_node(&mut self, source: &K) -> Result<usize, GraphErrors>{
+        if !self.adjacency_list.contains_key(source){
+            return Err(GraphErrors::NodeNotFound);
+        }
+
+        Ok(self.adjacency_list.entry(source.clone()).or_default().len())
     }
 }
 
