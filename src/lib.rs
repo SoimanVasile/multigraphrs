@@ -31,6 +31,7 @@ pub use weighted::Weighted;
 pub use weighted_directed::WeightedDirected;
 pub use edge::Edge;
 pub use graph_errors::GraphErrors;
+use std::collections::hash_map::{Iter, IterMut};
 
 use std::{collections::HashMap, hash::Hash, marker::PhantomData};
 
@@ -77,6 +78,14 @@ where
         
         self.adjacency_list.entry(source.clone()).or_default();
         Ok(source)
+    }
+
+    pub fn iter(&mut self) -> Iter<'_, K, Vec<Edge<K, W>>>{
+        self.adjacency_list.iter()
+    }
+
+    pub fn iter_mut(&mut self) -> IterMut<'_, K, Vec<Edge<K, W>>>{
+        self.adjacency_list.iter_mut()
     }
 }
 
