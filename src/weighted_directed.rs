@@ -1,4 +1,3 @@
-use std::hash::Hash;
 use crate::{DirectionStrategy, edge::Edge, graph_errors::GraphErrors};
 
 /// A strategy for weighted, directed graphs.
@@ -12,9 +11,8 @@ use crate::{DirectionStrategy, edge::Edge, graph_errors::GraphErrors};
 /// is needed, the user must call `add_edge` twice.
 pub struct WeightedDirected;
 
-impl<K, W> DirectionStrategy<K, W> for WeightedDirected
+impl<W> DirectionStrategy<W> for WeightedDirected
 where
-    K: Eq + Hash + Clone,
     W: Clone, // Note: Kept as Clone based on our f64 discussion
 {
     /// Adds a single directed edge from `source` to `target` with the specified `weight`.
@@ -23,11 +21,11 @@ where
     /// Returns `GraphErrors::NodeNotFound` if the `source` or `target` node 
     /// is missing from the graph's adjacency list.
     fn add_edge(
-        graph: &mut std::collections::HashMap<K, Vec<Edge<K, W>>>, 
-        source: &K, 
-        target: &K, 
+        graph: &mut std::collections::HashMap<usize, Vec<Edge<W>>>, 
+        source: &usize, 
+        target: &usize, 
         weight: &W
-    ) -> Result<Vec<Edge<K, W>>, GraphErrors> {
+    ) -> Result<Vec<Edge<W>>, GraphErrors> {
         
         if !graph.contains_key(source) || !graph.contains_key(target) {
             return Err(GraphErrors::NodeNotFound);

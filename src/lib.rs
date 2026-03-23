@@ -31,7 +31,6 @@ pub use weighted::Weighted;
 pub use weighted_directed::WeightedDirected;
 pub use edge::Edge;
 pub use graph_errors::GraphErrors;
-use std::collections::hash_map::{Iter, IterMut};
 
 use std::{collections::HashMap, hash::Hash, marker::PhantomData};
 
@@ -45,15 +44,18 @@ use std::{collections::HashMap, hash::Hash, marker::PhantomData};
 /// * `K`: The type of the nodes (Keys). Must implement `Eq`, `Hash`, and `Clone`.
 /// * `W`: The type of the edge weights. Must implement `Clone` (allowing floating-point weights).
 /// * `S`: The direction strategy (e.g., `Directed`, `Weighted`).
-pub struct MultiGraph<K, W, S: DirectionStrategy<K, W>>
+pub struct MultiGraph<K, W, S: DirectionStrategy<W>>
 where
     K: Eq + Hash + Clone,
     W: Clone,
 {
+    hashed_nodes: HashMap<K, usize>,
+    reversed_hashed_nodes: HashMap<usize, K>,
     /// The internal adjacency list mapping a node to its outgoing edges.
-    pub adjacency_list: HashMap<K, Vec<Edge<K, W>>>,
+    adjacency_list: HashMap<usize, Vec<Edge<W>>>,
     /// Marker to keep track of the specific strategy `S` being used.
-    pub _strategy: PhantomData<S>,
+    _strategy: PhantomData<S>,
+    next_id: u64,
 }
 
 // --- Core Methods Shared by ALL Graph Types ---
@@ -62,7 +64,7 @@ impl<K, W, S> MultiGraph<K, W, S>
 where
     K: Eq + Hash + Clone,
     W: Clone,
-    S: DirectionStrategy<K, W>,
+    S: DirectionStrategy<W>,
 {
     /// Adds a single, disconnected node to the graph.
     ///
@@ -72,28 +74,22 @@ where
     /// # Errors
     /// Returns `GraphErrors::NodeAlreadyExists` if the node is already present in the graph.
     pub fn add_node(&mut self, source: K) -> Result<K, GraphErrors> {
-        if self.adjacency_list.contains_key(&source) {
+        if self.hashed_nodes.contains_key(&source) {
             return Err(GraphErrors::NodeAlreadyExists);
         }
         
-        self.adjacency_list.entry(source.clone()).or_default();
+        self.hashed_nodes.insert(source.clone(), self.next_id as usize);
+        self.adjacency_list.entry(self.next_id as usize).or_default();
+        self.reversed_hashed_nodes.insert(self.next_id as usize, source.clone());
+        self.next_id+=1;
         Ok(source)
     }
 
-    pub fn iter(&mut self) ->Iter<'_, K, Vec<Edge<K, W>>>{
-        self.adjacency_list.iter()
-    }
-
-    pub fn iter_mut(&mut self) -> IterMut<'_, K, Vec<Edge<K, W>>>{
-        self.adjacency_list.iter_mut()
-    }
-
     pub fn check_grade_node(&mut self, source: &K) -> Result<usize, GraphErrors>{
-        if !self.adjacency_list.contains_key(source){
-            return Err(GraphErrors::NodeNotFound);
+        match self.hashed_nodes.get(source){
+            Some(n) => return Ok(self.adjacency_list.entry(*n).or_default().len()),
+            None => return Err(GraphErrors::NodeNotFound),
         }
-
-        Ok(self.adjacency_list.entry(source.clone()).or_default().len())
     }
 }
 
@@ -106,7 +102,7 @@ where
 {
     /// Creates a new, empty `Weighted` (undirected) graph.
     pub fn new() -> MultiGraph<K, W, Weighted> {
-        MultiGraph { adjacency_list: HashMap::new(), _strategy: PhantomData }
+        MultiGraph { adjacency_list: HashMap::new(), _strategy: PhantomData, hashed_nodes: HashMap::new(), reversed_hashed_nodes: HashMap::new(), next_id: 0}
     }
 
     /// Adds a weighted edge between two nodes in both directions.
@@ -114,8 +110,17 @@ where
     /// # Errors
     /// Returns `GraphErrors::NodeNotFound` if either the `source` or `target` node 
     /// does not exist in the graph prior to adding the edge.
-    pub fn add_edge(&mut self, source: K, target: K, weight: W) -> Result<Vec<Edge<K, W>>, GraphErrors> {
-        Weighted::add_edge(&mut self.adjacency_list, &source, &target, &weight)
+    pub fn add_edge(&mut self, source: K, target: K, weight: W) -> Result<Vec<Edge<W>>, GraphErrors> {
+        let source_hashed = match self.hashed_nodes.get(&source){
+            Some(t) => t,
+            None => return Err(GraphErrors::NodeNotFound),
+        };
+
+        let target_hashed = match self.hashed_nodes.get(&target){
+            Some(t) => t,
+            None => return Err(GraphErrors::NodeNotFound),
+        };
+        Weighted::add_edge(&mut self.adjacency_list, &source_hashed, &target_hashed, &weight)
     }
 }
 
@@ -126,15 +131,25 @@ where
 {
     /// Creates a new, empty `WeightedDirected` graph.
     pub fn new() -> MultiGraph<K, W, WeightedDirected> {
-        MultiGraph { adjacency_list: HashMap::new(), _strategy: PhantomData }
+        MultiGraph { adjacency_list: HashMap::new(), _strategy: PhantomData, hashed_nodes: HashMap::new(), next_id: 0, reversed_hashed_nodes: HashMap::new()}
     }
 
     /// Adds a directed edge from `source` to `target` with the given `weight`.
     ///
     /// # Errors
     /// Returns `GraphErrors::NodeNotFound` if either node does not exist.
-    pub fn add_edge(&mut self, source: K, target: K, weight: W) -> Result<Vec<Edge<K, W>>, GraphErrors> {
-        WeightedDirected::add_edge(&mut self.adjacency_list, &source, &target, &weight)
+    pub fn add_edge(&mut self, source: K, target: K, weight: W) -> Result<Vec<Edge<W>>, GraphErrors> {
+
+        let source_hashed = match self.hashed_nodes.get(&source){
+            Some(t) => t,
+            None => return Err(GraphErrors::NodeNotFound),
+        };
+
+        let target_hashed = match self.hashed_nodes.get(&target){
+            Some(t) => t,
+            None => return Err(GraphErrors::NodeNotFound),
+        };
+        WeightedDirected::add_edge(&mut self.adjacency_list, &source_hashed, &target_hashed, &weight)
     }
 }
 
@@ -144,15 +159,25 @@ where
 {
     /// Creates a new, empty, unweighted `Directed` graph.
     pub fn new() -> MultiGraph<K, u32, Directed> {
-        MultiGraph { adjacency_list: HashMap::new(), _strategy: PhantomData }
+        MultiGraph { adjacency_list: HashMap::new(), _strategy: PhantomData, hashed_nodes: HashMap::new(), reversed_hashed_nodes: HashMap::new(), next_id: 0 }
     }
 
     /// Adds a directed edge from `source` to `target` with a default weight of 1.
     ///
     /// # Errors
     /// Returns `GraphErrors::NodeNotFound` if either node does not exist.
-    pub fn add_edge(&mut self, source: K, target: K) -> Result<Vec<Edge<K, u32>>, GraphErrors> {
-        Directed::add_edge(&mut self.adjacency_list, &source, &target, &1)
+    pub fn add_edge(&mut self, source: K, target: K) -> Result<Vec<Edge<u32>>, GraphErrors> {
+ 
+        let source_hashed = match self.hashed_nodes.get(&source){
+            Some(t) => t,
+            None => return Err(GraphErrors::NodeNotFound),
+        };
+
+        let target_hashed = match self.hashed_nodes.get(&target){
+            Some(t) => t,
+            None => return Err(GraphErrors::NodeNotFound),
+        };
+        Directed::add_edge(&mut self.adjacency_list, &source_hashed, &target_hashed, &1)
     }
 }
 
@@ -162,14 +187,24 @@ where
 {
     /// Creates a new, empty, unweighted `Undirected` graph.
     pub fn new() -> MultiGraph<K, u32, Undirected> {
-        MultiGraph { adjacency_list: HashMap::new(), _strategy: PhantomData }
+        MultiGraph { adjacency_list: HashMap::new(), _strategy: PhantomData, hashed_nodes: HashMap::new(), reversed_hashed_nodes: HashMap::new(), next_id: 0}
     }
 
     /// Adds an undirected connection (edges in both directions) between `source` and `target`, defaulting weight to 1.
     ///
     /// # Errors
     /// Returns `GraphErrors::NodeNotFound` if either node does not exist.
-    pub fn add_edge(&mut self, source: K, target: K) -> Result<Vec<Edge<K, u32>>, GraphErrors> {
-        Undirected::add_edge(&mut self.adjacency_list, &source, &target, &1)
+    pub fn add_edge(&mut self, source: K, target: K) -> Result<Vec<Edge<u32>>, GraphErrors> {
+ 
+        let source_hashed = match self.hashed_nodes.get(&source){
+            Some(t) => t,
+            None => return Err(GraphErrors::NodeNotFound),
+        };
+
+        let target_hashed = match self.hashed_nodes.get(&target){
+            Some(t) => t,
+            None => return Err(GraphErrors::NodeNotFound),
+        };
+        Undirected::add_edge(&mut self.adjacency_list, &source_hashed, &target_hashed, &1)
     }
 }

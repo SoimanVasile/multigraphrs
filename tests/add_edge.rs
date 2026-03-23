@@ -28,9 +28,9 @@ pub fn test_weighted_graph() {
     let edges = graph.add_edge(10, 20, 500).unwrap();
     
     assert_eq!(edges.len(), 2); // Should return both edges
-    assert_eq!(edges[0].target, 20);
+    assert_eq!(edges[0].target, 1);
     assert_eq!(edges[0].weight, 500);
-    assert_eq!(edges[1].target, 10);
+    assert_eq!(edges[1].target, 0);
     assert_eq!(edges[1].weight, 500);
 
     // Test missing node error
@@ -48,7 +48,7 @@ pub fn test_directed_graph() {
     let edges = graph.add_edge("A", "B").unwrap(); // Only 2 arguments!
     
     assert_eq!(edges.len(), 1); // Directed means only 1 edge is created
-    assert_eq!(edges[0].target, "B");
+    assert_eq!(edges[0].target, 1);
     assert_eq!(edges[0].weight, 1);
 }
 
@@ -63,7 +63,7 @@ pub fn test_weighted_directed_graph() {
     let edges = graph.add_edge('X', 'Y', 3.14).unwrap();
     
     assert_eq!(edges.len(), 1); 
-    assert_eq!(edges[0].target, 'Y');
+    assert_eq!(edges[0].target, 1);
     assert_eq!(edges[0].weight, 3.14);
 }
 
@@ -78,8 +78,8 @@ pub fn test_undirected_graph() {
     let edges = graph.add_edge(100, 200).unwrap(); // Only 2 arguments!
     
     assert_eq!(edges.len(), 2);
-    assert_eq!(edges[0].target, 200);
+    assert_eq!(edges[0].target, 1);
     assert_eq!(edges[0].weight, 1);
-    assert_eq!(edges[1].target, 100);
+    assert_eq!(edges[1].target, 0);
     assert_eq!(edges[1].weight, 1);
 }

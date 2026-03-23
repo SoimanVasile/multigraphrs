@@ -1,5 +1,4 @@
 use crate::direction_strategy::DirectionStrategy;
-use std::hash::Hash;
 use crate::graph_errors::GraphErrors;
 use crate::Edge;
 use std::collections::HashMap;
@@ -13,9 +12,8 @@ use std::collections::HashMap;
 /// assign a default weight of `1` (as a `u32`) to every edge created.
 pub struct Directed;
 
-impl<K> DirectionStrategy<K, u32> for Directed
+impl DirectionStrategy<u32> for Directed
 where
-    K: Eq + Hash + Clone,
 {
     /// Adds a single directed edge from `source` to `target` with a weight of `1`.
     ///
@@ -23,11 +21,11 @@ where
     /// Returns `GraphErrors::NodeNotFound` if the `source` or `target` node 
     /// is missing from the graph's adjacency list.
     fn add_edge(
-        graph: &mut HashMap<K, Vec<Edge<K, u32>>>, 
-        source: &K, 
-        target: &K, 
+        graph: &mut HashMap<usize, Vec<Edge<u32>>>, 
+        source: &usize, 
+        target: &usize, 
         weight: &u32
-    ) -> Result<Vec<Edge<K, u32>>, GraphErrors> {
+    ) -> Result<Vec<Edge<u32>>, GraphErrors> {
 
         if !graph.contains_key(source) || !graph.contains_key(target) {
             return Err(GraphErrors::NodeNotFound);
