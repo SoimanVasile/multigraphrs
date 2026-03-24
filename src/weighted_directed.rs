@@ -1,4 +1,4 @@
-use crate::{DirectionStrategy, edge::Edge, graph_errors::GraphErrors};
+use crate::{DirectionStrategy, adjacency_list::AdjacencyList, edge::Edge, graph_errors::GraphErrors};
 
 /// A strategy for weighted, directed graphs.
 ///
@@ -17,22 +17,15 @@ where
 {
     /// Adds a single directed edge from `source` to `target` with the specified `weight`.
     ///
-    /// # Errors
-    /// Returns `GraphErrors::NodeNotFound` if the `source` or `target` node 
-    /// is missing from the graph's adjacency list.
     fn add_edge(
-        graph: &mut std::collections::HashMap<usize, Vec<Edge<W>>>, 
+        graph: &mut AdjacencyList<W>,
         source: &usize, 
         target: &usize, 
         weight: &W
     ) -> Result<Vec<Edge<W>>, GraphErrors> {
         
-        if !graph.contains_key(source) || !graph.contains_key(target) {
-            return Err(GraphErrors::NodeNotFound);
-        }
-
         let edge = Edge::new(target, weight);
-        graph.entry(source.clone()).or_default().push(edge.clone());
+        graph.add_edge_to_node(source, &edge);
         
         // Returns the single edge that was created
         Ok(vec![edge])

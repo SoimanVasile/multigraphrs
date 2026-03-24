@@ -22,6 +22,7 @@ pub mod weighted;
 pub mod undirected;
 pub mod weighted_directed;
 pub mod graph_errors;
+mod adjacency_list;
 
 // Expose the internal types publicly so users can import them easily
 pub use direction_strategy::DirectionStrategy;
@@ -31,6 +32,7 @@ pub use weighted::Weighted;
 pub use weighted_directed::WeightedDirected;
 pub use edge::Edge;
 pub use graph_errors::GraphErrors;
+use adjacency_list::AdjacencyList;
 
 use std::{collections::HashMap, hash::Hash, marker::PhantomData};
 
@@ -50,9 +52,9 @@ where
     W: Clone,
 {
     hashed_nodes: HashMap<K, usize>,
-    reversed_hashed_nodes: HashMap<usize, K>,
+    reversed_hashed_nodes: Vec<K>,
     /// The internal adjacency list mapping a node to its outgoing edges.
-    adjacency_list: HashMap<usize, Vec<Edge<W>>>,
+    adjacency_list: AdjacencyList<W>,
     /// Marker to keep track of the specific strategy `S` being used.
     _strategy: PhantomData<S>,
     next_id: u64,
@@ -79,15 +81,15 @@ where
         }
         
         self.hashed_nodes.insert(source.clone(), self.next_id as usize);
-        self.adjacency_list.entry(self.next_id as usize).or_default();
-        self.reversed_hashed_nodes.insert(self.next_id as usize, source.clone());
+        self.adjacency_list.add_node();
+        self.reversed_hashed_nodes.push(source.clone());
         self.next_id+=1;
         Ok(source)
     }
 
     pub fn check_grade_node(&mut self, source: &K) -> Result<usize, GraphErrors>{
         match self.hashed_nodes.get(source){
-            Some(n) => return Ok(self.adjacency_list.entry(*n).or_default().len()),
+            Some(n) => return Ok(self.adjacency_list.node_len(*n)),
             None => return Err(GraphErrors::NodeNotFound),
         }
     }
@@ -102,7 +104,7 @@ where
 {
     /// Creates a new, empty `Weighted` (undirected) graph.
     pub fn new() -> MultiGraph<K, W, Weighted> {
-        MultiGraph { adjacency_list: HashMap::new(), _strategy: PhantomData, hashed_nodes: HashMap::new(), reversed_hashed_nodes: HashMap::new(), next_id: 0}
+        MultiGraph { adjacency_list: AdjacencyList::new(), _strategy: PhantomData, hashed_nodes: HashMap::new(), reversed_hashed_nodes: Vec::new(), next_id: 0}
     }
 
     /// Adds a weighted edge between two nodes in both directions.
@@ -131,7 +133,11 @@ where
 {
     /// Creates a new, empty `WeightedDirected` graph.
     pub fn new() -> MultiGraph<K, W, WeightedDirected> {
-        MultiGraph { adjacency_list: HashMap::new(), _strategy: PhantomData, hashed_nodes: HashMap::new(), next_id: 0, reversed_hashed_nodes: HashMap::new()}
+        MultiGraph { adjacency_list: AdjacencyList::new(),
+        _strategy: PhantomData,
+        hashed_nodes: HashMap::new(),
+        next_id: 0,
+        reversed_hashed_nodes: Vec::new()}
     }
 
     /// Adds a directed edge from `source` to `target` with the given `weight`.
@@ -159,7 +165,11 @@ where
 {
     /// Creates a new, empty, unweighted `Directed` graph.
     pub fn new() -> MultiGraph<K, u32, Directed> {
-        MultiGraph { adjacency_list: HashMap::new(), _strategy: PhantomData, hashed_nodes: HashMap::new(), reversed_hashed_nodes: HashMap::new(), next_id: 0 }
+        MultiGraph { adjacency_list: AdjacencyList::new(),
+        _strategy: PhantomData,
+        hashed_nodes: HashMap::new(),
+        reversed_hashed_nodes: Vec::new(),
+        next_id: 0 }
     }
 
     /// Adds a directed edge from `source` to `target` with a default weight of 1.
@@ -187,7 +197,11 @@ where
 {
     /// Creates a new, empty, unweighted `Undirected` graph.
     pub fn new() -> MultiGraph<K, u32, Undirected> {
-        MultiGraph { adjacency_list: HashMap::new(), _strategy: PhantomData, hashed_nodes: HashMap::new(), reversed_hashed_nodes: HashMap::new(), next_id: 0}
+        MultiGraph { adjacency_list: AdjacencyList::new(), 
+            _strategy: PhantomData,
+            hashed_nodes: HashMap::new(),
+            reversed_hashed_nodes: Vec::new(),
+            next_id: 0}
     }
 
     /// Adds an undirected connection (edges in both directions) between `source` and `target`, defaulting weight to 1.

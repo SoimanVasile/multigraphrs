@@ -1,7 +1,7 @@
 use crate::DirectionStrategy;
 use crate::Edge;
 use crate::GraphErrors;
-use std::collections::HashMap;
+use crate::adjacency_list::AdjacencyList;
 
 /// A strategy for weighted, undirected graphs.
 ///
@@ -24,21 +24,17 @@ where
     /// Returns `GraphErrors::NodeNotFound` if the `source` or `target` node 
     /// is missing from the graph's adjacency list.
     fn add_edge(
-        graph: &mut HashMap<usize, Vec<Edge<W>>>, 
+        graph: &mut AdjacencyList<W>,
         source: &usize, 
         target: &usize, 
         weight: &W
     ) -> Result<Vec<Edge<W>>, GraphErrors> {
 
-        if !graph.contains_key(source) || !graph.contains_key(target) {
-            return Err(GraphErrors::NodeNotFound);
-        }
-
         let edge = Edge::new(target, weight);
         let edge_reverse = Edge::new(source, weight);
         
-        graph.entry(source.clone()).or_default().push(edge.clone());
-        graph.entry(target.clone()).or_default().push(edge_reverse.clone());
+        graph.add_edge_to_node(source, &edge);
+        graph.add_edge_to_node(target, &edge_reverse);
 
         // Returns both edges to confirm the bidirectional connection
         Ok(vec![edge, edge_reverse])
