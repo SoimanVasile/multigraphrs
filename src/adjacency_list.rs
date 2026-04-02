@@ -1,15 +1,14 @@
-
-use crate::{Edge, adjacency_list};
+use crate::{Edge, GraphErrors};
 pub struct AdjacencyList<W>
 where
-    W: Clone
+    W: Clone + std::cmp::PartialEq,
 {
     adjacency_list: Vec<Vec<Edge<W>>>,
 }
 
 impl<W> AdjacencyList<W>
 where
-    W: Clone
+    W: Clone + std::cmp::PartialEq,
 {
     pub fn new() -> AdjacencyList<W>{
         AdjacencyList{adjacency_list: Vec::new() }
@@ -27,7 +26,28 @@ where
         self.adjacency_list.push(Vec::new());
     }
 
-    pub fn node_len(&mut self, node: usize) -> usize{
-        self.adjacency_list[node].len()
+    pub fn node_len(&mut self, node: &usize) -> usize{
+        self.adjacency_list[*node].len()
+    }
+    pub fn iter_node(&self, node: &usize) -> std::slice::Iter<'_, Edge<W>>{
+        return self.adjacency_list[*node].iter()
+    }
+
+    pub fn get_edges(&self, node: &usize) -> Vec<Edge<W>>{
+        self.adjacency_list[*node].clone()
+    }
+
+    pub fn remove_edge<F>(&mut self, source: &usize, edge: &Edge<W>, func: F) -> Result<Edge<W>, GraphErrors>
+    where
+        F: Fn(&Edge<W>, &Edge<W>) -> bool
+    {
+        let index = self.adjacency_list[*source]
+            .iter()
+            .position(|e| func(edge, e));
+        if let Some(i) = index {
+            Ok(self.adjacency_list[*source].swap_remove(i))
+        } else {
+            Err(GraphErrors::EdgeDoesntExists)
+        }
     }
 }

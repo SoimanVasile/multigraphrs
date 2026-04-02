@@ -7,4 +7,5 @@ pub enum GraphErrors {
     EdgeAlreadyExists,
     /// Returned when attempting to add a node that is already in the adjacency list.
     NodeAlreadyExists,
+    EdgeDoesntExists,
 }

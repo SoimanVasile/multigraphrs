@@ -49,7 +49,7 @@ use std::{collections::HashMap, hash::Hash, marker::PhantomData};
 pub struct MultiGraph<K, W, S: DirectionStrategy<W>>
 where
     K: Eq + Hash + Clone,
-    W: Clone,
+    W: Clone + std::cmp::PartialEq,
 {
     hashed_nodes: HashMap<K, usize>,
     reversed_hashed_nodes: Vec<K>,
@@ -65,7 +65,7 @@ where
 impl<K, W, S> MultiGraph<K, W, S>
 where
     K: Eq + Hash + Clone,
-    W: Clone,
+    W: Clone + std::cmp::PartialEq,
     S: DirectionStrategy<W>,
 {
     /// Adds a single, disconnected node to the graph.
@@ -87,9 +87,9 @@ where
         Ok(source)
     }
 
-    pub fn check_grade_node(&mut self, source: &K) -> Result<usize, GraphErrors>{
+    pub fn degree(&mut self, source: &K) -> Result<usize, GraphErrors>{
         match self.hashed_nodes.get(source){
-            Some(n) => return Ok(self.adjacency_list.node_len(*n)),
+            Some(n) => return Ok(self.adjacency_list.node_len(n)),
             None => return Err(GraphErrors::NodeNotFound),
         }
     }
@@ -100,7 +100,7 @@ where
 impl<K, W> MultiGraph<K, W, Weighted>
 where
     K: Eq + Hash + Clone,
-    W: Clone,
+    W: Clone + std::cmp::PartialEq,
 {
     /// Creates a new, empty `Weighted` (undirected) graph.
     pub fn new() -> MultiGraph<K, W, Weighted> {
@@ -112,7 +112,7 @@ where
     /// # Errors
     /// Returns `GraphErrors::NodeNotFound` if either the `source` or `target` node 
     /// does not exist in the graph prior to adding the edge.
-    pub fn add_edge(&mut self, source: K, target: K, weight: W) -> Result<Vec<Edge<W>>, GraphErrors> {
+    pub fn add_edge(&mut self, source: K, target: K, weight: W) -> Result<Edge<W>, GraphErrors> {
         let source_hashed = match self.hashed_nodes.get(&source){
             Some(t) => t,
             None => return Err(GraphErrors::NodeNotFound),
@@ -124,12 +124,31 @@ where
         };
         Weighted::add_edge(&mut self.adjacency_list, &source_hashed, &target_hashed, &weight)
     }
+
+    pub fn remove_edge(&mut self, source: K, target: K, weight: W) -> Result<Edge<W>, GraphErrors>{
+        let source_hashed = match self.hashed_nodes.get(&source){
+            Some(t) => t,
+            None => return Err(GraphErrors::NodeNotFound),
+        };
+
+        let target_hashed = match self.hashed_nodes.get(&target){
+            Some(t) => t,
+            None => return Err(GraphErrors::NodeNotFound),
+        };
+        let edge = Edge::new(target_hashed, &weight);
+        let reverse_edge = Edge::new(source_hashed, &weight);
+
+            match Weighted::remove_edge(&mut self.adjacency_list, source_hashed, &edge) {
+            Ok(t) => {Weighted::remove_edge(&mut self.adjacency_list, target_hashed, &reverse_edge); return Ok(t);},
+            Err(t) => {return Err(t);}
+        }
+    }
 }
 
 impl<K, W> MultiGraph<K, W, WeightedDirected>
 where
     K: Eq + Hash + Clone,
-    W: Clone,
+    W: Clone + std::cmp::PartialEq,
 {
     /// Creates a new, empty `WeightedDirected` graph.
     pub fn new() -> MultiGraph<K, W, WeightedDirected> {
@@ -144,7 +163,7 @@ where
     ///
     /// # Errors
     /// Returns `GraphErrors::NodeNotFound` if either node does not exist.
-    pub fn add_edge(&mut self, source: K, target: K, weight: W) -> Result<Vec<Edge<W>>, GraphErrors> {
+    pub fn add_edge(&mut self, source: K, target: K, weight: W) -> Result<Edge<W>, GraphErrors> {
 
         let source_hashed = match self.hashed_nodes.get(&source){
             Some(t) => t,
@@ -156,6 +175,20 @@ where
             None => return Err(GraphErrors::NodeNotFound),
         };
         WeightedDirected::add_edge(&mut self.adjacency_list, &source_hashed, &target_hashed, &weight)
+    }
+
+    pub fn remove_edge(&mut self, source: K, target: K, weight: W) -> Result<Edge<W>, GraphErrors>{
+        let source_hashed = match self.hashed_nodes.get(&source){
+            Some(t) => t,
+            None => return Err(GraphErrors::NodeNotFound),
+        };
+
+        let target_hashed = match self.hashed_nodes.get(&target){
+            Some(t) => t,
+            None => return Err(GraphErrors::NodeNotFound),
+        };
+        let edge = Edge::new(target_hashed, &weight);
+        WeightedDirected::remove_edge(&mut self.adjacency_list, source_hashed, &edge)
     }
 }
 
@@ -176,7 +209,7 @@ where
     ///
     /// # Errors
     /// Returns `GraphErrors::NodeNotFound` if either node does not exist.
-    pub fn add_edge(&mut self, source: K, target: K) -> Result<Vec<Edge<u32>>, GraphErrors> {
+    pub fn add_edge(&mut self, source: K, target: K) -> Result<Edge<u32>, GraphErrors> {
  
         let source_hashed = match self.hashed_nodes.get(&source){
             Some(t) => t,
@@ -208,7 +241,7 @@ where
     ///
     /// # Errors
     /// Returns `GraphErrors::NodeNotFound` if either node does not exist.
-    pub fn add_edge(&mut self, source: K, target: K) -> Result<Vec<Edge<u32>>, GraphErrors> {
+    pub fn add_edge(&mut self, source: K, target: K) -> Result<Edge<u32>, GraphErrors> {
  
         let source_hashed = match self.hashed_nodes.get(&source){
             Some(t) => t,

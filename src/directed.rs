@@ -24,12 +24,18 @@ impl DirectionStrategy<u32> for Directed
         source: &usize, 
         target: &usize, 
         weight: &u32
-    ) -> Result<Vec<Edge<u32>>, GraphErrors> {
+    ) -> Result<Edge<u32>, GraphErrors> {
 
         let edge = Edge::new(target, weight);
         graph.add_edge_to_node(source, &edge);
         
         // Returns the single edge that was created
-        Ok(vec![edge])
+        Ok(edge)
+    }
+
+    fn remove_edge(graph: &mut AdjacencyList<u32>, source: &usize, edge: &Edge<u32> ) -> Result<Edge<u32>, GraphErrors> {
+        return graph.remove_edge(source, edge, |edge_1: &Edge<u32>, edge_2: &Edge<u32>| -> bool {
+            return edge_1.get_target() == edge_2.get_target();
+        })
     }
 }

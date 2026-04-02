@@ -16,7 +16,7 @@ pub struct Weighted;
 
 impl<W> DirectionStrategy<W> for Weighted
 where
-    W: Clone, // Note: Kept as Clone based on our f64 discussion
+    W: Clone + std::cmp::PartialEq,
 {
     /// Adds two edges (source -> target and target -> source) with the specified `weight`.
     ///
@@ -28,7 +28,7 @@ where
         source: &usize, 
         target: &usize, 
         weight: &W
-    ) -> Result<Vec<Edge<W>>, GraphErrors> {
+    ) -> Result<Edge<W>, GraphErrors> {
 
         let edge = Edge::new(target, weight);
         let edge_reverse = Edge::new(source, weight);
@@ -37,6 +37,11 @@ where
         graph.add_edge_to_node(target, &edge_reverse);
 
         // Returns both edges to confirm the bidirectional connection
-        Ok(vec![edge, edge_reverse])
+        Ok(edge)
+    }
+
+    fn remove_edge(graph: &mut AdjacencyList<W>, source: &usize, edge: &Edge<W>) -> Result<Edge<W>, GraphErrors> {
+        graph.remove_edge(source, edge, |edge_1: &Edge<W>, edge_2: &Edge<W>| -> bool 
+            {return edge_1.get_weight() == edge_2.get_weight() && edge_1.get_target() == edge_2.get_target()})
     }
 }

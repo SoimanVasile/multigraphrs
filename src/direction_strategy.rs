@@ -9,9 +9,11 @@ use crate::graph_errors::GraphErrors;
 /// can share the same core `MultiGraph` structure while maintaining unique behavior.
 pub trait DirectionStrategy<W>
 where
-    W: Clone,
+    W: Clone + std::cmp::PartialEq,
 {
     /// Processes the raw source, target, and weight, mutating the `graph` directly.
     /// Returns the edges that were successfully created.
-    fn add_edge(graph: &mut AdjacencyList<W>, source: &usize, target: &usize, weight: &W) -> Result<Vec<Edge<W>>, GraphErrors>;
+    fn add_edge(graph: &mut AdjacencyList<W>, source: &usize, target: &usize, weight: &W) -> Result<Edge<W>, GraphErrors>;
+
+    fn remove_edge(graph: &mut AdjacencyList<W>, source: &usize, edge: &Edge<W> ) -> Result<Edge<W>, GraphErrors>;
 }
