@@ -37,8 +37,13 @@ where
         Ok(edge)
     }
 
-    fn remove_edge(graph: &mut AdjacencyList<u32>, source: &usize, edge: &Edge<u32> ) -> Result<Edge<u32>, crate::GraphErrors> {
-        graph.remove_edge(source, edge, |edge_1: &Edge<u32>, edge_2: &Edge<u32>| -> bool {
+    fn remove_edge(graph: &mut AdjacencyList<u32>, source: &usize, target: &usize, weight: &u32 ) -> Result<Edge<u32>, crate::GraphErrors> {
+        let edge = Edge::new(target, weight);
+        let reverse_edge = Edge::new(source, weight);
+        graph.remove_edge(target, &reverse_edge, |edge_1: &Edge<u32>, edge_2: &Edge<u32>| -> bool {
+            return edge_1.get_target() == edge_2.get_target();
+        })?;
+        graph.remove_edge(source, &edge, |edge_1: &Edge<u32>, edge_2: &Edge<u32>| -> bool {
             return edge_1.get_target() == edge_2.get_target();
         })
     }

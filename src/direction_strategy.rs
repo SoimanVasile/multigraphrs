@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use crate::Edge;
 use crate::adjacency_list::AdjacencyList;
 use crate::graph_errors::GraphErrors;
@@ -15,5 +14,5 @@ where
     /// Returns the edges that were successfully created.
     fn add_edge(graph: &mut AdjacencyList<W>, source: &usize, target: &usize, weight: &W) -> Result<Edge<W>, GraphErrors>;
 
-    fn remove_edge(graph: &mut AdjacencyList<W>, source: &usize, edge: &Edge<W> ) -> Result<Edge<W>, GraphErrors>;
+    fn remove_edge(graph: &mut AdjacencyList<W>, source: &usize, target: &usize, weight: &W ) -> Result<Edge<W>, GraphErrors>;
 }

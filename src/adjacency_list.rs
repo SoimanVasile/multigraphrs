@@ -26,7 +26,7 @@ where
         self.adjacency_list.push(Vec::new());
     }
 
-    pub fn node_len(&mut self, node: &usize) -> usize{
+    pub fn node_len(&self, node: &usize) -> usize{
         self.adjacency_list[*node].len()
     }
     pub fn iter_node(&self, node: &usize) -> std::slice::Iter<'_, Edge<W>>{

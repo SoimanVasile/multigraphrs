@@ -31,3 +31,28 @@ where
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct EdgeView<K, W>
+where
+    K: Clone + Eq,
+    W: Clone + std::cmp::PartialEq
+{
+    target: K,
+    weight: W,
+}
+
+impl<K, W> EdgeView<K, W>
+where
+    W: Clone + std::cmp::PartialEq,
+    K: Eq + Clone
+{
+    pub fn new(target: &K, weight: &W) -> EdgeView<K, W>{
+        EdgeView { target: target.clone(), weight: weight.clone() }
+    }
+    pub fn get_target(&self) -> K{
+        return self.target.clone();
+    }
+    pub fn get_weight(&self) -> W{
+        self.weight.clone()
+    }
+}

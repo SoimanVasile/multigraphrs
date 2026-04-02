@@ -30,9 +30,10 @@ pub use directed::Directed;
 pub use undirected::Undirected;
 pub use weighted::Weighted;
 pub use weighted_directed::WeightedDirected;
-pub use edge::Edge;
+use edge::Edge;
 pub use graph_errors::GraphErrors;
 use adjacency_list::AdjacencyList;
+pub use edge::EdgeView;
 
 use std::{collections::HashMap, hash::Hash, marker::PhantomData};
 
@@ -87,7 +88,7 @@ where
         Ok(source)
     }
 
-    pub fn degree(&mut self, source: &K) -> Result<usize, GraphErrors>{
+    pub fn degree(&self, source: &K) -> Result<usize, GraphErrors>{
         match self.hashed_nodes.get(source){
             Some(n) => return Ok(self.adjacency_list.node_len(n)),
             None => return Err(GraphErrors::NodeNotFound),
@@ -112,7 +113,7 @@ where
     /// # Errors
     /// Returns `GraphErrors::NodeNotFound` if either the `source` or `target` node 
     /// does not exist in the graph prior to adding the edge.
-    pub fn add_edge(&mut self, source: K, target: K, weight: W) -> Result<Edge<W>, GraphErrors> {
+    pub fn add_edge(&mut self, source: K, target: K, weight: W) -> Result<EdgeView<K, W>, GraphErrors> {
         let source_hashed = match self.hashed_nodes.get(&source){
             Some(t) => t,
             None => return Err(GraphErrors::NodeNotFound),
@@ -122,10 +123,12 @@ where
             Some(t) => t,
             None => return Err(GraphErrors::NodeNotFound),
         };
-        Weighted::add_edge(&mut self.adjacency_list, &source_hashed, &target_hashed, &weight)
+        let edge = Weighted::add_edge(&mut self.adjacency_list, &source_hashed, &target_hashed, &weight)?;
+        Ok(EdgeView::new(&self.reversed_hashed_nodes[edge.get_target()], &edge.get_weight()))
+
     }
 
-    pub fn remove_edge(&mut self, source: K, target: K, weight: W) -> Result<Edge<W>, GraphErrors>{
+    pub fn remove_edge(&mut self, source: K, target: K, weight: W) -> Result<EdgeView<K, W>, GraphErrors>{
         let source_hashed = match self.hashed_nodes.get(&source){
             Some(t) => t,
             None => return Err(GraphErrors::NodeNotFound),
@@ -135,15 +138,13 @@ where
             Some(t) => t,
             None => return Err(GraphErrors::NodeNotFound),
         };
-        let edge = Edge::new(target_hashed, &weight);
-        let reverse_edge = Edge::new(source_hashed, &weight);
+        let edge = Weighted::remove_edge(&mut self.adjacency_list, source_hashed, target_hashed, &weight)?;
 
-            match Weighted::remove_edge(&mut self.adjacency_list, source_hashed, &edge) {
-            Ok(t) => {Weighted::remove_edge(&mut self.adjacency_list, target_hashed, &reverse_edge); return Ok(t);},
-            Err(t) => {return Err(t);}
-        }
+
+        Ok(EdgeView::new(&self.reversed_hashed_nodes[edge.get_target()], &edge.get_weight()))
     }
 }
+
 
 impl<K, W> MultiGraph<K, W, WeightedDirected>
 where
@@ -163,8 +164,7 @@ where
     ///
     /// # Errors
     /// Returns `GraphErrors::NodeNotFound` if either node does not exist.
-    pub fn add_edge(&mut self, source: K, target: K, weight: W) -> Result<Edge<W>, GraphErrors> {
-
+    pub fn add_edge(&mut self, source: K, target: K, weight: W) -> Result<EdgeView<K, W>, GraphErrors> {
         let source_hashed = match self.hashed_nodes.get(&source){
             Some(t) => t,
             None => return Err(GraphErrors::NodeNotFound),
@@ -174,10 +174,12 @@ where
             Some(t) => t,
             None => return Err(GraphErrors::NodeNotFound),
         };
-        WeightedDirected::add_edge(&mut self.adjacency_list, &source_hashed, &target_hashed, &weight)
+        let edge = WeightedDirected::add_edge(&mut self.adjacency_list, &source_hashed, &target_hashed, &weight)?;
+
+        Ok(EdgeView::new(&self.reversed_hashed_nodes[edge.get_target()], &edge.get_weight()))
     }
 
-    pub fn remove_edge(&mut self, source: K, target: K, weight: W) -> Result<Edge<W>, GraphErrors>{
+    pub fn remove_edge(&mut self, source: K, target: K, weight: W) -> Result<EdgeView<K, W>, GraphErrors>{
         let source_hashed = match self.hashed_nodes.get(&source){
             Some(t) => t,
             None => return Err(GraphErrors::NodeNotFound),
@@ -187,8 +189,9 @@ where
             Some(t) => t,
             None => return Err(GraphErrors::NodeNotFound),
         };
-        let edge = Edge::new(target_hashed, &weight);
-        WeightedDirected::remove_edge(&mut self.adjacency_list, source_hashed, &edge)
+        let edge = WeightedDirected::remove_edge(&mut self.adjacency_list, source_hashed, target_hashed, &weight)?;
+
+        Ok(EdgeView::new(&self.reversed_hashed_nodes[edge.get_target()], &edge.get_weight()))
     }
 }
 
@@ -209,7 +212,7 @@ where
     ///
     /// # Errors
     /// Returns `GraphErrors::NodeNotFound` if either node does not exist.
-    pub fn add_edge(&mut self, source: K, target: K) -> Result<Edge<u32>, GraphErrors> {
+    pub fn add_edge(&mut self, source: K, target: K) -> Result<EdgeView<K, u32>, GraphErrors> {
  
         let source_hashed = match self.hashed_nodes.get(&source){
             Some(t) => t,
@@ -220,7 +223,24 @@ where
             Some(t) => t,
             None => return Err(GraphErrors::NodeNotFound),
         };
-        Directed::add_edge(&mut self.adjacency_list, &source_hashed, &target_hashed, &1)
+        let edge = Directed::add_edge(&mut self.adjacency_list, &source_hashed, &target_hashed, &1)?;
+        
+        Ok(EdgeView::new(&self.reversed_hashed_nodes[edge.get_target()], &edge.get_weight()))
+    }
+
+    pub fn remove_edge(&mut self, source: K, target: K) -> Result<EdgeView<K, u32>, GraphErrors>{
+        let source_hashed = match self.hashed_nodes.get(&source){
+            Some(t) => t,
+            None => return Err(GraphErrors::NodeNotFound),
+        };
+
+        let target_hashed = match self.hashed_nodes.get(&target){
+            Some(t) => t,
+            None => return Err(GraphErrors::NodeNotFound),
+        };
+        let edge = Directed::remove_edge(&mut self.adjacency_list, source_hashed, target_hashed, &1)?;
+
+        Ok(EdgeView::new(&self.reversed_hashed_nodes[edge.get_target()], &edge.get_weight()))
     }
 }
 
@@ -241,7 +261,7 @@ where
     ///
     /// # Errors
     /// Returns `GraphErrors::NodeNotFound` if either node does not exist.
-    pub fn add_edge(&mut self, source: K, target: K) -> Result<Edge<u32>, GraphErrors> {
+    pub fn add_edge(&mut self, source: K, target: K) -> Result<EdgeView<K, u32>, GraphErrors> {
  
         let source_hashed = match self.hashed_nodes.get(&source){
             Some(t) => t,
@@ -252,6 +272,23 @@ where
             Some(t) => t,
             None => return Err(GraphErrors::NodeNotFound),
         };
-        Undirected::add_edge(&mut self.adjacency_list, &source_hashed, &target_hashed, &1)
+        let edge = Undirected::add_edge(&mut self.adjacency_list, &source_hashed, &target_hashed, &1)?;
+
+        Ok(EdgeView::new(&self.reversed_hashed_nodes[edge.get_target()], &edge.get_weight()))
+    }
+
+    pub fn remove_edge(&mut self, source: K, target: K) -> Result<EdgeView<K, u32>, GraphErrors>{
+        let source_hashed = match self.hashed_nodes.get(&source){
+            Some(t) => t,
+            None => return Err(GraphErrors::NodeNotFound),
+        };
+
+        let target_hashed = match self.hashed_nodes.get(&target){
+            Some(t) => t,
+            None => return Err(GraphErrors::NodeNotFound),
+        };
+        let edge = Undirected::remove_edge(&mut self.adjacency_list, source_hashed, target_hashed, &1)?;
+
+        Ok(EdgeView::new(&self.reversed_hashed_nodes[edge.get_target()], &edge.get_weight()))
     }
 }

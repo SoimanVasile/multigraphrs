@@ -33,8 +33,9 @@ impl DirectionStrategy<u32> for Directed
         Ok(edge)
     }
 
-    fn remove_edge(graph: &mut AdjacencyList<u32>, source: &usize, edge: &Edge<u32> ) -> Result<Edge<u32>, GraphErrors> {
-        return graph.remove_edge(source, edge, |edge_1: &Edge<u32>, edge_2: &Edge<u32>| -> bool {
+    fn remove_edge(graph: &mut AdjacencyList<u32>, source: &usize, target: &usize, weight: &u32 ) -> Result<Edge<u32>, GraphErrors> {
+        let edge = Edge::new(target, weight);
+        return graph.remove_edge(source, &edge, |edge_1: &Edge<u32>, edge_2: &Edge<u32>| -> bool {
             return edge_1.get_target() == edge_2.get_target();
         })
     }

@@ -31,8 +31,9 @@ where
         Ok(edge)
     }
 
-    fn remove_edge(graph: &mut AdjacencyList<W>, source: &usize, edge: &Edge<W> ) -> Result<Edge<W>, GraphErrors> {
-        graph.remove_edge(source, edge, |edge_1: &Edge<W>, edge_2: &Edge<W>| -> bool {
+    fn remove_edge(graph: &mut AdjacencyList<W>, source: &usize, target: &usize, weight: &W ) -> Result<Edge<W>, GraphErrors> {
+        let edge = Edge::new(target, weight);
+        graph.remove_edge(source, &edge, |edge_1: &Edge<W>, edge_2: &Edge<W>| -> bool {
             return edge_1.get_weight() == edge_2.get_weight() && edge_1.get_target() == edge_2.get_target();
         })
     }
