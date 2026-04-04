@@ -90,3 +90,11 @@ fn remove_edge_nonexistent() {
     g.add_node(2).unwrap();
     assert!(g.remove_edge(1, 2, 1).is_err());
 }
+
+#[test]
+fn remove_edge_missing_node() {
+    let mut g = MultiGraph::<u32, u32, WeightedDirected>::new();
+    g.add_node(1).unwrap();
+    assert!(g.remove_edge(1, 99, 1).is_err());
+    assert!(g.remove_edge(99, 1, 1).is_err());
+}

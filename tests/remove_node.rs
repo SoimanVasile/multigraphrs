@@ -1,4 +1,4 @@
-use multigraphrs::{Directed, MultiGraph, Undirected, Weighted, WeightedDirected};
+use multigraphrs::{Directed, GraphErrors, MultiGraph, Undirected, Weighted, WeightedDirected};
 
 #[test]
 fn test_remove_node_directed() {
@@ -79,4 +79,40 @@ fn test_remove_node_weighted_directed() {
     
     graph.remove_node(&"Dest").unwrap();
     assert_eq!(graph.degree(&"Source").unwrap(), 0);
+}
+
+// --- Error path tests ---
+
+#[test]
+fn remove_nonexistent_node_directed() {
+    let mut graph = MultiGraph::<u32, u32, Directed>::new();
+    assert_eq!(graph.remove_node(&999), Err(GraphErrors::NodeNotFound));
+}
+
+#[test]
+fn remove_nonexistent_node_undirected() {
+    let mut graph = MultiGraph::<u32, u32, Undirected>::new();
+    assert_eq!(graph.remove_node(&42), Err(GraphErrors::NodeNotFound));
+}
+
+#[test]
+fn remove_nonexistent_node_weighted() {
+    let mut graph = MultiGraph::<u32, f64, Weighted>::new();
+    assert_eq!(graph.remove_node(&1), Err(GraphErrors::NodeNotFound));
+}
+
+#[test]
+fn remove_nonexistent_node_weighted_directed() {
+    let mut graph = MultiGraph::<u32, f64, WeightedDirected>::new();
+    assert_eq!(graph.remove_node(&0), Err(GraphErrors::NodeNotFound));
+}
+
+#[test]
+fn remove_same_node_twice_returns_error() {
+    let mut graph = MultiGraph::<&str, u32, Directed>::new();
+    graph.add_node("A").unwrap();
+
+    assert_eq!(graph.remove_node(&"A"), Ok("A"));
+    // Second removal should fail
+    assert_eq!(graph.remove_node(&"A"), Err(GraphErrors::NodeNotFound));
 }

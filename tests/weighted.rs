@@ -113,3 +113,11 @@ fn remove_specific_parallel_edge() {
     assert_eq!(g.degree(&1), Ok(1));
     assert_eq!(g.degree(&2), Ok(1));
 }
+
+#[test]
+fn remove_edge_missing_node() {
+    let mut g = MultiGraph::<u32, i32, Weighted>::new();
+    g.add_node(1).unwrap();
+    assert!(g.remove_edge(1, 99, 10).is_err());
+    assert!(g.remove_edge(99, 1, 10).is_err());
+}

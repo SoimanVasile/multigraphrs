@@ -106,6 +106,17 @@ where
             None => return Err(GraphErrors::NodeNotFound),
         }
     }
+    pub fn get_neighbours(&self, source: &K) -> Result<Vec<EdgeView<K, W>>, GraphErrors>{
+        let source_hashed = match self.hashed_nodes.get(&source){
+            Some(t) => t,
+            None => return Err(GraphErrors::NodeNotFound),
+        };
+        let neighbours = self.adjacency_list.get_edges(source_hashed);
+        Ok(neighbours
+            .iter()
+            .map(|edge| EdgeView::new(self.reversed_hashed_nodes[edge.get_target()].as_ref().unwrap(), &edge.get_weight()))
+            .collect())
+    }
 }
 
 // --- Strategy-Specific Implementations ---

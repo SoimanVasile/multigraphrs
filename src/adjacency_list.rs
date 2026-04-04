@@ -18,19 +18,12 @@ where
         self.adjacency_list[*node].push(edge.clone())
     }
 
-    pub fn len(&self) -> usize{
-        self.adjacency_list.len()
-    }
-
     pub fn add_node(&mut self){
         self.adjacency_list.push(Vec::new());
     }
 
     pub fn node_len(&self, node: &usize) -> usize{
         self.adjacency_list[*node].len()
-    }
-    pub fn iter_node(&self, node: &usize) -> std::slice::Iter<'_, Edge<W>>{
-        return self.adjacency_list[*node].iter()
     }
 
     pub fn get_edges(&self, node: &usize) -> Vec<Edge<W>>{
