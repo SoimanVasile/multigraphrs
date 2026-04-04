@@ -117,6 +117,39 @@ where
             .map(|edge| EdgeView::new(self.reversed_hashed_nodes[edge.get_target()].as_ref().unwrap(), &edge.get_weight()))
             .collect())
     }
+
+    pub fn contains_node(&self, key: &K) -> bool{
+        match self.hashed_nodes.get(&key){
+            Some(_) => true,
+            None => false,
+        }
+    }
+
+    pub fn node_count(&self) -> usize{
+        self.adjacency_list.node_count()
+    }
+
+    pub fn edge_count(&self) -> usize{
+        self.adjacency_list.edge_count()
+    }
+
+    pub fn contains_edge(&self, source: &K, target: &K) -> bool{
+
+        let source_hashed = match self.hashed_nodes.get(&source){
+            Some(t) => t,
+            None => return false,
+        };
+
+        let target_hashed = match self.hashed_nodes.get(&target){
+            Some(t) => t,
+            None => return false,
+        };
+
+        match self.adjacency_list.contains_edge(source_hashed, target_hashed) {
+            Ok(_) => true,
+            Err(_) => false,
+        }
+    }
 }
 
 // --- Strategy-Specific Implementations ---
