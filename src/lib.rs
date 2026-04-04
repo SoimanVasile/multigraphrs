@@ -53,7 +53,7 @@ where
     W: Clone + std::cmp::PartialEq,
 {
     hashed_nodes: HashMap<K, usize>,
-    reversed_hashed_nodes: Vec<K>,
+    reversed_hashed_nodes: Vec<Option<K>>,
     /// The internal adjacency list mapping a node to its outgoing edges.
     adjacency_list: AdjacencyList<W>,
     /// Marker to keep track of the specific strategy `S` being used.
@@ -83,9 +83,21 @@ where
         
         self.hashed_nodes.insert(source.clone(), self.next_id as usize);
         self.adjacency_list.add_node();
-        self.reversed_hashed_nodes.push(source.clone());
+        self.reversed_hashed_nodes.push(Some(source.clone()));
         self.next_id+=1;
         Ok(source)
+    }
+
+    pub fn remove_node(&mut self, source: &K) -> Result<K, GraphErrors> {
+        let index = match self.hashed_nodes.remove(source) {
+            Some(idx) => idx,
+            None => return Err(GraphErrors::NodeNotFound),
+        };
+        
+        let removed_node = self.reversed_hashed_nodes[index].take().unwrap();
+        self.adjacency_list.remove_node(&index);
+        
+        Ok(removed_node)
     }
 
     pub fn degree(&self, source: &K) -> Result<usize, GraphErrors>{
@@ -124,7 +136,7 @@ where
             None => return Err(GraphErrors::NodeNotFound),
         };
         let edge = Weighted::add_edge(&mut self.adjacency_list, &source_hashed, &target_hashed, &weight)?;
-        Ok(EdgeView::new(&self.reversed_hashed_nodes[edge.get_target()], &edge.get_weight()))
+        Ok(EdgeView::new(self.reversed_hashed_nodes[edge.get_target()].as_ref().unwrap(), &edge.get_weight()))
 
     }
 
@@ -141,7 +153,7 @@ where
         let edge = Weighted::remove_edge(&mut self.adjacency_list, source_hashed, target_hashed, &weight)?;
 
 
-        Ok(EdgeView::new(&self.reversed_hashed_nodes[edge.get_target()], &edge.get_weight()))
+        Ok(EdgeView::new(self.reversed_hashed_nodes[edge.get_target()].as_ref().unwrap(), &edge.get_weight()))
     }
 }
 
@@ -176,7 +188,7 @@ where
         };
         let edge = WeightedDirected::add_edge(&mut self.adjacency_list, &source_hashed, &target_hashed, &weight)?;
 
-        Ok(EdgeView::new(&self.reversed_hashed_nodes[edge.get_target()], &edge.get_weight()))
+        Ok(EdgeView::new(self.reversed_hashed_nodes[edge.get_target()].as_ref().unwrap(), &edge.get_weight()))
     }
 
     pub fn remove_edge(&mut self, source: K, target: K, weight: W) -> Result<EdgeView<K, W>, GraphErrors>{
@@ -191,7 +203,7 @@ where
         };
         let edge = WeightedDirected::remove_edge(&mut self.adjacency_list, source_hashed, target_hashed, &weight)?;
 
-        Ok(EdgeView::new(&self.reversed_hashed_nodes[edge.get_target()], &edge.get_weight()))
+        Ok(EdgeView::new(self.reversed_hashed_nodes[edge.get_target()].as_ref().unwrap(), &edge.get_weight()))
     }
 }
 
@@ -225,7 +237,7 @@ where
         };
         let edge = Directed::add_edge(&mut self.adjacency_list, &source_hashed, &target_hashed, &1)?;
         
-        Ok(EdgeView::new(&self.reversed_hashed_nodes[edge.get_target()], &edge.get_weight()))
+        Ok(EdgeView::new(self.reversed_hashed_nodes[edge.get_target()].as_ref().unwrap(), &edge.get_weight()))
     }
 
     pub fn remove_edge(&mut self, source: K, target: K) -> Result<EdgeView<K, u32>, GraphErrors>{
@@ -240,7 +252,7 @@ where
         };
         let edge = Directed::remove_edge(&mut self.adjacency_list, source_hashed, target_hashed, &1)?;
 
-        Ok(EdgeView::new(&self.reversed_hashed_nodes[edge.get_target()], &edge.get_weight()))
+        Ok(EdgeView::new(self.reversed_hashed_nodes[edge.get_target()].as_ref().unwrap(), &edge.get_weight()))
     }
 }
 
@@ -274,7 +286,7 @@ where
         };
         let edge = Undirected::add_edge(&mut self.adjacency_list, &source_hashed, &target_hashed, &1)?;
 
-        Ok(EdgeView::new(&self.reversed_hashed_nodes[edge.get_target()], &edge.get_weight()))
+        Ok(EdgeView::new(self.reversed_hashed_nodes[edge.get_target()].as_ref().unwrap(), &edge.get_weight()))
     }
 
     pub fn remove_edge(&mut self, source: K, target: K) -> Result<EdgeView<K, u32>, GraphErrors>{
@@ -289,6 +301,6 @@ where
         };
         let edge = Undirected::remove_edge(&mut self.adjacency_list, source_hashed, target_hashed, &1)?;
 
-        Ok(EdgeView::new(&self.reversed_hashed_nodes[edge.get_target()], &edge.get_weight()))
+        Ok(EdgeView::new(self.reversed_hashed_nodes[edge.get_target()].as_ref().unwrap(), &edge.get_weight()))
     }
 }

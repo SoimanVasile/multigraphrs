@@ -50,4 +50,15 @@ where
             Err(GraphErrors::EdgeDoesntExists)
         }
     }
+
+    pub fn remove_node(&mut self, target: &usize) {
+
+        self.adjacency_list[*target].clear();
+        
+        for list in &mut self.adjacency_list{
+            list.retain(
+                |e| e.target != *target
+            );
+        }
+    }
 }
