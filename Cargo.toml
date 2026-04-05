@@ -2,10 +2,12 @@
 name = "multigraphrs"
 version = "0.1.1"
 edition = "2024"
-authors = ["Șoiman Vasile-Cristian <vasilecristiansoiman@gmail.com"]
+authors = ["Șoiman Vasile-Cristian <vasilecristiansoiman@gmail.com>"]
 description = "A versatile, strategy-pattern based MultiGraph library supporting directed, undirected, and weighted graphs."
 license = "MIT"
-repository = "https://github.com/yourusername/multigraphrs"
+repository = "https://github.com/SoimanVasile/multigraphrs"
+keywords = ["graph", "multigraph", "directed", "undirected", "weighted"]
+categories = ["data-structures", "algorithms"]
 readme = "README.md"
 
 [dependencies]

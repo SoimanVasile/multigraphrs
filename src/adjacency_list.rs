@@ -77,4 +77,8 @@ where
     pub fn edge_count(&self) ->usize{
         self.number_of_edges
     }
+
+    pub fn get_edges_ref(&self, source: &usize) -> &Vec<Edge<W>>{
+        &self.adjacency_list[*source]
+    }
 }

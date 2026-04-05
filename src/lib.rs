@@ -15,6 +15,7 @@
 //! graph.add_edge("A", "B").unwrap();
 //! ```
 
+pub mod multigraph_iterator;
 pub mod edge;
 pub mod direction_strategy;
 pub mod directed;
@@ -34,6 +35,7 @@ use edge::Edge;
 pub use graph_errors::GraphErrors;
 use adjacency_list::AdjacencyList;
 pub use edge::EdgeView;
+pub use multigraph_iterator::NodeIter;
 
 use std::{collections::HashMap, hash::Hash, marker::PhantomData};
 
@@ -53,12 +55,12 @@ where
     W: Clone + std::cmp::PartialEq,
 {
     hashed_nodes: HashMap<K, usize>,
-    reversed_hashed_nodes: Vec<Option<K>>,
+    pub(crate) reversed_hashed_nodes: Vec<Option<K>>,
     /// The internal adjacency list mapping a node to its outgoing edges.
-    adjacency_list: AdjacencyList<W>,
+    pub(crate) adjacency_list: AdjacencyList<W>,
     /// Marker to keep track of the specific strategy `S` being used.
     _strategy: PhantomData<S>,
-    next_id: u64,
+    pub(crate) next_id: u64,
 }
 
 // --- Core Methods Shared by ALL Graph Types ---
@@ -131,6 +133,10 @@ where
 
     pub fn edge_count(&self) -> usize{
         self.adjacency_list.edge_count()
+    }
+
+    pub fn iter(&self) -> multigraph_iterator::NodeIter<'_, K, W, S> {
+        multigraph_iterator::NodeIter { graph: self, index: 0 }
     }
 
     pub fn contains_edge(&self, source: &K, target: &K) -> bool{

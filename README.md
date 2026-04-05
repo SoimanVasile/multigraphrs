@@ -149,11 +149,14 @@ DirectionStrategy<W>  (trait)
 
 ## Roadmap
 
-- [ ] Core query methods: `contains_node`, `contains_edge`, `node_count`, `neighbors`
-- [ ] `remove_node` operation
+- [x] Core query methods: `contains_node`, `contains_edge`, `node_count`, `edge_count`, `get_neighbours`
+- [x] `remove_node` operation
+- [x] Iterator support (`graph.iter()` yields `(&K, Vec<EdgeView<K, W>>)`)
+- [ ] `IntoIterator` implementation (for `&graph` in for-loops)
 - [ ] Eliminate the `W` generic for unweighted strategies (associated type)
 - [ ] Rename `EdgeDoesntExists` → `EdgeNotFound`
-- [ ] Standard trait implementations (`Default`, `Debug`, `Display`, `IntoIterator`)
+- [ ] Standard trait implementations (`Default`, `Debug`, `Display`)
+- [ ] `Display` for `GraphErrors` + `impl std::error::Error`
 - [ ] Builder / `from_edges` constructor
 - [ ] Graph algorithms (BFS, DFS)
 
