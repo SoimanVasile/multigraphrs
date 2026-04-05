@@ -39,8 +39,8 @@ graph.add_node("Paris").unwrap();
 
 // Directed: one-way edge, weight defaults to 1
 let edge = graph.add_edge("Berlin", "Paris").unwrap();
-assert_eq!(edge.get_target(), "Paris");
-assert_eq!(edge.get_weight(), 1);
+assert_eq!(*edge.get_target(), "Paris");
+assert_eq!(*edge.get_weight(), 1);
 
 // Parallel edges are allowed (multigraph)
 graph.add_edge("Berlin", "Paris").unwrap();
@@ -74,8 +74,8 @@ graph.add_node("NYC").unwrap();
 graph.add_node("LON").unwrap();
 
 let edge = graph.add_edge("NYC", "LON", 5585.0).unwrap();
-assert_eq!(edge.get_target(), "LON");
-assert_eq!(edge.get_weight(), 5585.0);
+assert_eq!(*edge.get_target(), "LON");
+assert_eq!(*edge.get_weight(), 5585.0);
 ```
 
 ### Weighted Undirected Graph
@@ -90,8 +90,8 @@ graph.add_node(2).unwrap();
 
 // Weighted undirected: bidirectional edges with the same weight
 let edge = graph.add_edge(1, 2, 42.5).unwrap();
-assert_eq!(edge.get_target(), 2);
-assert_eq!(edge.get_weight(), 42.5);
+assert_eq!(*edge.get_target(), 2);
+assert_eq!(*edge.get_weight(), 42.5);
 ```
 
 ## Strategies
@@ -126,8 +126,8 @@ assert_eq!(edge.get_weight(), 42.5);
 
 | Method | Returns | Description |
 | :--- | :--- | :--- |
-| `get_target()` | `K` | The target node key |
-| `get_weight()` | `W` | The edge weight |
+| `get_target()` | `&K` | The target node key |
+| `get_weight()` | `&W` | The edge weight |
 
 ### `GraphErrors`
 
