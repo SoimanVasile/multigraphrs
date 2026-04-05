@@ -111,9 +111,16 @@ assert_eq!(edge.get_weight(), 42.5);
 | :--- | :--- | :--- |
 | `new()` | `MultiGraph<K, W, S>` | Create an empty graph |
 | `add_node(key)` | `Result<K, GraphErrors>` | Insert a node |
+| `remove_node(&key)` | `Result<K, GraphErrors>` | Remove a node and all its edges |
 | `add_edge(...)` | `Result<EdgeView<K, W>, GraphErrors>` | Insert an edge (signature varies by strategy) |
 | `remove_edge(...)` | `Result<EdgeView<K, W>, GraphErrors>` | Remove an edge by exact match |
 | `degree(&key)` | `Result<usize, GraphErrors>` | Number of edges incident to a node |
+| `contains_node(&key)` | `bool` | Check if a node exists |
+| `contains_edge(&src, &tgt)` | `bool` | Check if an edge exists |
+| `node_count()` | `usize` | Total number of nodes |
+| `edge_count()` | `usize` | Total number of edges |
+| `get_neighbours(&key)` | `Result<Vec<EdgeView<K, W>>, GraphErrors>` | Get all edges from a node |
+| `iter()` | `NodeIter<K, W, S>` | Iterate over `(&K, Vec<EdgeView<K, W>>)` |
 
 ### `EdgeView<K, W>`
 
@@ -126,9 +133,8 @@ assert_eq!(edge.get_weight(), 42.5);
 
 | Variant | Trigger |
 | :--- | :--- |
-| `NodeNotFound` | Adding an edge to/from a non-existent node |
+| `NodeNotFound` | Operating on a non-existent node |
 | `NodeAlreadyExists` | Adding a duplicate node |
-| `EdgeAlreadyExists` | Inserting a duplicate edge (if enforced by strategy) |
 | `EdgeDoesntExists` | Removing an edge that doesn't exist |
 
 ## Architecture
@@ -136,7 +142,7 @@ assert_eq!(edge.get_weight(), 42.5);
 ```
 MultiGraph<K, W, S>
 ├── hashed_nodes: HashMap<K, usize>        // user key → internal index
-├── reversed_hashed_nodes: Vec<K>          // internal index → user key
+├── reversed_hashed_nodes: Vec<Option<K>>   // internal index → user key (None if removed)
 ├── adjacency_list: AdjacencyList<W>       // Vec<Vec<Edge<W>>>
 └── _strategy: PhantomData<S>              // zero-cost strategy marker
 
@@ -147,6 +153,20 @@ DirectionStrategy<W>  (trait)
 └── Weighted          ── add_edge → 2 edges  │ remove_edge → match by target + weight
 ```
 
+## Performance
+
+Benchmarks were conducted on a 10,000,000 node graph with 10,000,000 edges in a simple chain structure.
+
+| Metric | `u32` Nodes | `String` Nodes |
+| :--- | :--- | :--- |
+| **Add 10M Nodes** | 1.25s | 4.66s |
+| **Add 10M Edges** | 3.23s | 4.02s |
+| **Iteration** | 202ms | 406ms |
+| **Peak Memory** | **1.31 GB** | **2.31 GB** |
+
+> *Benchmarks run in `--release` mode. String overhead reflects 10,000,000 heap-allocated keys.*
+> You can run this yourself using: `cargo run --example stress_test --release`
+
 ## Roadmap
 
 - [x] Core query methods: `contains_node`, `contains_edge`, `node_count`, `edge_count`, `get_neighbours`
@@ -154,11 +174,9 @@ DirectionStrategy<W>  (trait)
 - [x] Iterator support (`graph.iter()` yields `(&K, Vec<EdgeView<K, W>>)`)
 - [ ] `IntoIterator` implementation (for `&graph` in for-loops)
 - [ ] Eliminate the `W` generic for unweighted strategies (associated type)
-- [ ] Rename `EdgeDoesntExists` → `EdgeNotFound`
 - [ ] Standard trait implementations (`Default`, `Debug`, `Display`)
 - [ ] `Display` for `GraphErrors` + `impl std::error::Error`
 - [ ] Builder / `from_edges` constructor
-- [ ] Graph algorithms (BFS, DFS)
 
 ## License
 
