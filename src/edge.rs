@@ -1,3 +1,4 @@
+
 /// Represents a single connection between nodes in the graph.
 ///
 /// An edge is always stored inside the adjacency list of a "source" node, 
@@ -49,10 +50,10 @@ where
     pub fn new(target: &K, weight: &W) -> EdgeView<K, W>{
         EdgeView { target: target.clone(), weight: weight.clone() }
     }
-    pub fn get_target(&self) -> K{
-        return self.target.clone();
+    pub fn get_target(&self) -> &K{
+        &self.target
     }
-    pub fn get_weight(&self) -> W{
-        self.weight.clone()
+    pub fn get_weight(&self) -> &W{
+        &self.weight
     }
 }

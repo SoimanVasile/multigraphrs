@@ -7,8 +7,8 @@ fn add_edge_success() {
     g.add_node(2).unwrap();
 
     let edge = g.add_edge(1, 2, 3.14).unwrap();
-    assert_eq!(edge.get_target(), 2);
-    assert_eq!(edge.get_weight(), 3.14);
+    assert_eq!(*edge.get_target(), 2);
+    assert_eq!(*edge.get_weight(), 3.14);
 }
 
 #[test]
@@ -57,8 +57,8 @@ fn preserves_weight_value() {
     g.add_node("LON").unwrap();
 
     let edge = g.add_edge("NYC", "LON", 5585.0).unwrap();
-    assert_eq!(edge.get_target(), "LON");
-    assert_eq!(edge.get_weight(), 5585.0);
+    assert_eq!(*edge.get_target(), "LON");
+    assert_eq!(*edge.get_weight(), 5585.0);
 }
 
 #[test]
@@ -80,8 +80,8 @@ fn remove_edge_success() {
     assert_eq!(g.degree(&2), Ok(1));
 
     let removed = g.remove_edge(1, 2, 100).unwrap();
-    assert_eq!(removed.get_target(), 2);
-    assert_eq!(removed.get_weight(), 100);
+    assert_eq!(*removed.get_target(), 2);
+    assert_eq!(*removed.get_weight(), 100);
 
     assert_eq!(g.degree(&1), Ok(0));
     assert_eq!(g.degree(&2), Ok(0));

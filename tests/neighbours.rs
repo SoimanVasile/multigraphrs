@@ -15,7 +15,7 @@ fn neighbours_directed_basic() {
     let neighbours = g.get_neighbours(&"A").unwrap();
     assert_eq!(neighbours.len(), 2);
 
-    let targets: Vec<&str> = neighbours.iter().map(|e| e.get_target()).collect();
+    let targets: Vec<&str> = neighbours.iter().map(|e| *e.get_target()).collect();
     assert!(targets.contains(&"B"));
     assert!(targets.contains(&"C"));
 }
@@ -59,7 +59,7 @@ fn neighbours_undirected_basic() {
     // Node 2 should see node 1 as a neighbour
     let n2 = g.get_neighbours(&2).unwrap();
     assert_eq!(n2.len(), 1);
-    assert_eq!(n2[0].get_target(), 1);
+    assert_eq!(*n2[0].get_target(), 1);
 }
 
 // --- WeightedDirected ---
@@ -74,8 +74,8 @@ fn neighbours_weighted_directed_basic() {
 
     let neighbours = g.get_neighbours(&"X").unwrap();
     assert_eq!(neighbours.len(), 1);
-    assert_eq!(neighbours[0].get_target(), "Y");
-    assert_eq!(neighbours[0].get_weight(), 3.14);
+    assert_eq!(*neighbours[0].get_target(), "Y");
+    assert_eq!(*neighbours[0].get_weight(), 3.14);
 }
 
 // --- Weighted (undirected) ---
@@ -90,12 +90,12 @@ fn neighbours_weighted_basic() {
 
     let n10 = g.get_neighbours(&10).unwrap();
     assert_eq!(n10.len(), 1);
-    assert_eq!(n10[0].get_target(), 20);
-    assert_eq!(n10[0].get_weight(), 500);
+    assert_eq!(*n10[0].get_target(), 20);
+    assert_eq!(*n10[0].get_weight(), 500);
 
     let n20 = g.get_neighbours(&20).unwrap();
     assert_eq!(n20.len(), 1);
-    assert_eq!(n20[0].get_target(), 10);
+    assert_eq!(*n20[0].get_target(), 10);
 }
 
 // --- Error paths ---
@@ -140,7 +140,7 @@ fn neighbours_after_removing_neighbour() {
 
     let neighbours = g.get_neighbours(&"A").unwrap();
     assert_eq!(neighbours.len(), 1);
-    assert_eq!(neighbours[0].get_target(), "C");
+    assert_eq!(*neighbours[0].get_target(), "C");
 }
 
 // --- Parallel edges ---

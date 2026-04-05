@@ -40,7 +40,7 @@ fn iter_directed_with_edges() {
             "A" => {
                 found_a = true;
                 assert_eq!(edges.len(), 2);
-                let targets: Vec<&str> = edges.iter().map(|e| e.get_target()).collect();
+                let targets: Vec<&str> = edges.iter().map(|e| *e.get_target()).collect();
                 assert!(targets.contains(&"B"));
                 assert!(targets.contains(&"C"));
             }
@@ -73,11 +73,11 @@ fn iter_undirected_with_edges() {
         match *node {
             1 => {
                 assert_eq!(edges.len(), 1);
-                assert_eq!(edges[0].get_target(), 2);
+                assert_eq!(*edges[0].get_target(), 2);
             }
             2 => {
                 assert_eq!(edges.len(), 1);
-                assert_eq!(edges[0].get_target(), 1);
+                assert_eq!(*edges[0].get_target(), 1);
             }
             _ => panic!("Unexpected node"),
         }
@@ -98,8 +98,8 @@ fn iter_weighted_directed() {
         match *node {
             "X" => {
                 assert_eq!(edges.len(), 1);
-                assert_eq!(edges[0].get_target(), "Y");
-                assert_eq!(edges[0].get_weight(), 3.14);
+                assert_eq!(*edges[0].get_target(), "Y");
+                assert_eq!(*edges[0].get_weight(), 3.14);
             }
             "Y" => {
                 assert!(edges.is_empty());
@@ -121,10 +121,10 @@ fn iter_weighted_undirected() {
 
     for (node, edges) in g.iter() {
         assert_eq!(edges.len(), 1);
-        assert_eq!(edges[0].get_weight(), 500);
+        assert_eq!(*edges[0].get_weight(), 500);
         match *node {
-            10 => assert_eq!(edges[0].get_target(), 20),
-            20 => assert_eq!(edges[0].get_target(), 10),
+            10 => assert_eq!(*edges[0].get_target(), 20),
+            20 => assert_eq!(*edges[0].get_target(), 10),
             _ => panic!("Unexpected node"),
         }
     }
@@ -156,7 +156,7 @@ fn iter_after_remove_node() {
         match *node {
             "A" => {
                 assert_eq!(edges.len(), 1);
-                assert_eq!(edges[0].get_target(), "C");
+                assert_eq!(*edges[0].get_target(), "C");
             }
             "C" => {
                 assert!(edges.is_empty());

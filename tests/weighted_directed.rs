@@ -7,8 +7,8 @@ fn add_edge_success() {
     g.add_node('Y').unwrap();
 
     let edge = g.add_edge('X', 'Y', 3.14).unwrap();
-    assert_eq!(edge.get_target(), 'Y');
-    assert_eq!(edge.get_weight(), 3.14);
+    assert_eq!(*edge.get_target(), 'Y');
+    assert_eq!(*edge.get_weight(), 3.14);
 }
 
 #[test]
@@ -78,8 +78,8 @@ fn remove_edge_success() {
     g.add_edge(1, 2, 50).unwrap();
 
     let removed = g.remove_edge(1, 2, 50).unwrap();
-    assert_eq!(removed.get_target(), 2);
-    assert_eq!(removed.get_weight(), 50);
+    assert_eq!(*removed.get_target(), 2);
+    assert_eq!(*removed.get_weight(), 50);
     assert_eq!(g.degree(&1), Ok(0));
 }
 

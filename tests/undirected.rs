@@ -7,8 +7,8 @@ fn add_edge_success() {
     g.add_node("B").unwrap();
 
     let edge = g.add_edge("A", "B").unwrap();
-    assert_eq!(edge.get_target(), "B");
-    assert_eq!(edge.get_weight(), 1);
+    assert_eq!(*edge.get_target(), "B");
+    assert_eq!(*edge.get_weight(), 1);
 }
 
 #[test]
