@@ -22,7 +22,7 @@ A **strategy-pattern based** multigraph library for Rust. One generic `MultiGrap
 
 ```toml
 [dependencies]
-multigraphrs = "0.1.1"
+multigraphrs = "0.1.2"
 ```
 
 ## Quick Start
