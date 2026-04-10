@@ -60,7 +60,8 @@ where
     pub(crate) adjacency_list: AdjacencyList<W>,
     /// Marker to keep track of the specific strategy `S` being used.
     _strategy: PhantomData<S>,
-    pub(crate) next_id: u64,
+    pub(crate) next_id: u32,
+    pub(crate) removed_ids: Vec<u32>,
 }
 
 // --- Core Methods Shared by ALL Graph Types ---
@@ -82,12 +83,26 @@ where
         if self.hashed_nodes.contains_key(&source) {
             return Err(GraphErrors::NodeAlreadyExists);
         }
+        let node_id;
+        if self.removed_ids.is_empty() == true{
+            node_id=self.next_id;
+            self.adjacency_list.add_node();
+            self.next_id+=1;
+        }
+        else{
+            node_id = self.removed_ids.pop().unwrap();
+            self.adjacency_list.increment_node_counter();
+        }
         
-        self.hashed_nodes.insert(source.clone(), self.next_id as usize);
-        self.adjacency_list.add_node();
-        self.reversed_hashed_nodes.push(Some(source.clone()));
-        self.next_id+=1;
+        self.hashed_nodes.insert(source.clone(), node_id as usize);
+        if node_id >= self.reversed_hashed_nodes.len() as u32{
+            self.reversed_hashed_nodes.push(Some(source.clone()));
+        }
+        else{
+            self.reversed_hashed_nodes[node_id as usize] = Some(source.clone());
+        }
         Ok(source)
+
     }
 
     pub fn remove_node(&mut self, source: &K) -> Result<K, GraphErrors> {
@@ -95,6 +110,8 @@ where
             Some(idx) => idx,
             None => return Err(GraphErrors::NodeNotFound),
         };
+
+        self.removed_ids.push(index as u32);
         
         let removed_node = self.reversed_hashed_nodes[index].take().unwrap();
         self.adjacency_list.remove_node(&index);
@@ -167,7 +184,12 @@ where
 {
     /// Creates a new, empty `Weighted` (undirected) graph.
     pub fn new() -> MultiGraph<K, W, Weighted> {
-        MultiGraph { adjacency_list: AdjacencyList::new(), _strategy: PhantomData, hashed_nodes: HashMap::new(), reversed_hashed_nodes: Vec::new(), next_id: 0}
+        MultiGraph { adjacency_list: AdjacencyList::new(),
+        _strategy: PhantomData,
+        hashed_nodes: HashMap::new(),
+        reversed_hashed_nodes: Vec::new(),
+        next_id: 0,
+        removed_ids: Vec::new()}
     }
 
     /// Adds a weighted edge between two nodes in both directions.
@@ -219,7 +241,9 @@ where
         _strategy: PhantomData,
         hashed_nodes: HashMap::new(),
         next_id: 0,
-        reversed_hashed_nodes: Vec::new()}
+        reversed_hashed_nodes: Vec::new(),
+        removed_ids: Vec::new(),
+        }
     }
 
     /// Adds a directed edge from `source` to `target` with the given `weight`.
@@ -267,7 +291,8 @@ where
         _strategy: PhantomData,
         hashed_nodes: HashMap::new(),
         reversed_hashed_nodes: Vec::new(),
-        next_id: 0 }
+        next_id: 0,
+        removed_ids: Vec::new()}
     }
 
     /// Adds a directed edge from `source` to `target` with a default weight of 1.
@@ -316,7 +341,8 @@ where
             _strategy: PhantomData,
             hashed_nodes: HashMap::new(),
             reversed_hashed_nodes: Vec::new(),
-            next_id: 0}
+            next_id: 0,
+            removed_ids: Vec::new(),}
     }
 
     /// Adds an undirected connection (edges in both directions) between `source` and `target`, defaulting weight to 1.

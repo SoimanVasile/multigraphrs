@@ -81,4 +81,8 @@ where
     pub fn get_edges_ref(&self, source: &usize) -> &Vec<Edge<W>>{
         &self.adjacency_list[*source]
     }
+
+    pub fn increment_node_counter(&mut self) {
+        self.number_of_nodes+=1;
+    }
 }
