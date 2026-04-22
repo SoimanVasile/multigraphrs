@@ -11,3 +11,5 @@ categories = ["data-structures", "algorithms"]
 readme = "README.md"
 
 [dependencies]
+bytemuck = { version = "1.25.0", features = ["derive"] }
+memmap2 = "0.9.10"
