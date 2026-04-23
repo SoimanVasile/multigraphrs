@@ -1,0 +1,357 @@
+use std::io::Seek;
+use std::io::SeekFrom;
+use std::io::Write;
+use std::marker::PhantomData;
+use std::fs::OpenOptions;
+use bytemuck::{Pod, Zeroable};
+use memmap2::MmapOptions;
+use std::path::Path;
+
+use crate::Edge;
+use crate::StorageBackend;
+
+pub trait FromDiskBytes {
+    fn from_bytes(bytes: &[u8]) -> Self;
+}
+
+impl FromDiskBytes for String{
+    fn from_bytes(bytes: &[u8]) -> Self {
+        std::str::from_utf8(bytes).unwrap().to_string()
+    }
+}
+
+macro_rules! impl_from_disk_bytes_numeric {
+    ($($t:ty),*) => {
+        $(
+            impl FromDiskBytes for $t {
+                fn from_bytes(bytes: &[u8]) -> Self {
+                    let arr = bytes
+                        .try_into()
+                        .expect("Fatal: Corrupted disk read! Byte slice length mismatch!");
+                    <$t>::from_le_bytes(arr)
+                }
+            }
+        )*
+    };
+}
+
+impl_from_disk_bytes_numeric!(
+    u8, u16, u32, u64, u128,
+    i8, i16, i32, i64, i128,
+    f32, f64
+);
+#[derive(Copy, Clone, Pod, Zeroable)]
+#[repr(C)]
+pub struct DiskEdge{
+    pub weight_offset: u64,
+    pub weight_len: u64,
+    pub node: u32,
+    pub _padding: [u8; 4],
+}
+
+impl DiskEdge{
+    pub fn new(weight_offset: u64, weight_len: u64, node: u32) -> DiskEdge{
+        DiskEdge { weight_offset, weight_len, node, _padding: [0; 4]}
+    }
+}
+
+#[derive(Copy, Clone, Pod, Zeroable)]
+#[repr(C)]
+pub struct DiskNode{
+    pub node_idx: u64,
+    pub list_edges_offset: u64,
+    pub number_of_edges: u64,
+}
+
+impl DiskNode{
+    pub fn new(node_idx: u64, list_edges_offset: u64, number_of_edges: u64) -> Self{
+        Self { node_idx, list_edges_offset, number_of_edges }   
+    }
+}
+
+#[derive(Copy, Clone)]
+#[repr(C)]
+pub struct SuperBlock{
+    pub magic_number: u32,
+    pub version: u32,
+
+    pub node_count: u64,
+    pub edge_count: u64,
+
+    pub next_structure_free_block: u64,
+    pub next_data_free_block: u64,
+
+    pub _padding: [u8; 984],
+}
+
+unsafe impl Pod for SuperBlock{}
+unsafe impl Zeroable for SuperBlock {}
+
+impl SuperBlock {
+    pub fn new() -> Self{
+        Self{
+            magic_number: u32::from_le_bytes(*b"MGRF"),
+            version: 1,
+            node_count: 0,
+            edge_count: 0,
+
+            next_structure_free_block: 0,
+            next_data_free_block: 0,
+
+            _padding: [0; 984],
+
+        }
+    }
+}
+
+pub struct DiskStorage<W>
+where
+    W: Clone + std::cmp::PartialEq + FromDiskBytes
+{
+
+    file_structure: std::fs::File,
+    file_data: std::fs::File,
+    file_node: std::fs::File,
+
+    mmap_structure: memmap2::MmapMut,
+    mmap_data: memmap2::MmapMut,
+    mmap_node: memmap2::MmapMut,
+    _marker: PhantomData<W>,
+}
+
+pub struct DiskEdgeIterator<'a, W>
+where
+    W: Clone + std::cmp::PartialEq + FromDiskBytes
+{
+    mmap_ref: &'a DiskStorage<W>,
+    current_offset: u64,
+    edges_left: u64,
+}
+
+impl<'a, W> Iterator for DiskEdgeIterator<'a, W>
+where
+    W: Clone + PartialEq + FromDiskBytes{
+    type Item=Edge<W>;
+
+    fn next(&mut self) -> Option<<Self as Iterator>::Item>{
+        if self.edges_left == 0{
+            return None;
+        }
+        
+        let struct_bytes = &self.mmap_ref.mmap_structure[
+            self.current_offset as usize .. self.current_offset as usize + size_of::<DiskEdge>()
+        ];
+
+        let disk_edge: &DiskEdge = bytemuck::from_bytes(struct_bytes);
+        self.current_offset += size_of::<DiskEdge>() as u64;
+        
+        let weight_bytes: &[u8] = &self.mmap_ref.mmap_data[
+            disk_edge.weight_offset as usize.. (disk_edge.weight_offset + disk_edge.weight_len) as usize];
+
+        let weight: W = FromDiskBytes::from_bytes(weight_bytes);
+
+        self.edges_left-=1;
+
+        Some(Edge::new(disk_edge.node, &weight))
+    }
+}
+
+impl<W> DiskStorage<W>
+where
+    W: Clone + std::cmp::PartialEq + FromDiskBytes,
+{
+    pub fn new<P1, P2, P3>(structure_path: P1, data_path: P2, node_path: P3) -> DiskStorage<W>
+    where
+        P1: AsRef<Path>,
+        P2: AsRef<Path>,
+        P3: AsRef<Path>,
+    {
+        let mut file_structure = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(structure_path)
+            .expect("Failed to open the structure file!");
+
+        let mut file_data = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(data_path)
+            .expect("Failed to open the data file!");
+
+        let mut file_node = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(node_path)
+            .expect("Failed to open the node file!");
+
+        if file_structure.metadata().unwrap().len() == 0{
+            file_structure.set_len(1024 * 1024).unwrap();
+        }
+
+        if file_data.metadata().unwrap().len() == 0{
+            file_data.set_len(1024 * 1024).unwrap();
+        }
+
+        if file_node.metadata().unwrap().len() == 0{
+            file_node.set_len(1024 * 1024).unwrap();
+            let initial_super_block = SuperBlock::new();
+            let bytes_to_write: &[u8] = bytemuck::bytes_of(&initial_super_block);
+            file_node.write_all(bytes_to_write).unwrap();
+        }
+
+        let mmap_structure = unsafe{
+            MmapOptions::new()
+                .map_mut(&file_structure)
+                .unwrap()
+        };
+
+        let mmap_data = unsafe{
+            MmapOptions::new()
+                .map_mut(&file_data)
+                .unwrap()
+        };
+
+        let mmap_node = unsafe{
+            MmapOptions::new()
+                .map_mut(&file_node)
+                .unwrap()
+        };
+
+        DiskStorage { file_structure, file_data, mmap_structure, mmap_data, _marker: PhantomData, file_node, mmap_node}
+    }
+}
+
+impl<W> StorageBackend<W> for DiskStorage<W>
+where
+    W: Clone + PartialEq + FromDiskBytes
+{
+    type EdgeIter<'a> = DiskEdgeIterator<'a, W> where Self: 'a, W: 'a;
+    fn add_node(&mut self){
+        let mut superblock: SuperBlock = unsafe{
+            let raw_ptr = self.mmap_node.as_ptr();
+            std::ptr::read(raw_ptr as *const SuperBlock)
+        };
+
+        let new_node_id = superblock.node_count;
+
+        let disk_node: DiskNode = DiskNode::new(new_node_id, u64::MAX, 0);
+
+        let node_offset = 1024 + (new_node_id * std::mem::size_of::<DiskNode>() as u64);
+
+        self.file_node.seek(SeekFrom::Start(node_offset))
+            .expect("Failed to seek to node offset");
+        self.file_node.write_all(bytemuck::bytes_of(&disk_node))
+            .expect("Failed to write new node to disk");
+
+        superblock.node_count += 1;
+
+        self.file_node.seek(SeekFrom::Start(0))
+            .expect("Failed to seek to superblock");
+
+        let superblock_bytes = unsafe{
+            std::slice::from_raw_parts(
+                &superblock as *const SuperBlock as *const u8,
+                std::mem::size_of::<SuperBlock>()
+            )
+        };
+
+        self.file_node.write_all(superblock_bytes);
+    }
+
+    fn add_edge_to_node(&mut self, node: u32, edge: &Edge<W>) {
+        let mut superblock: SuperBlock = unsafe {
+            let raw_ptr = self.mmap_node.as_ptr();
+            std::ptr::read(raw_ptr as *const SuperBlock)
+        };
+
+        let node_offset = 1024 + (node as usize * std::mem::size_of::<DiskNode>());
+
+        let disk_node_bytes: &mut [u8]= &mut self.mmap_node[node_offset .. node_offset + std::mem::size_of::<DiskNode>()];
+
+        let disk_node: &mut DiskNode = bytemuck::from_bytes_mut(disk_node_bytes);
+
+        if disk_node.list_edges_offset == u64::MAX{
+            disk_node.list_edges_offset = superblock.next_structure_free_block;
+            self.file_structure
+                .seek(SeekFrom::Start(superblock.next_structure_free_block))
+                .expect("Failed to seek to the edge offset");
+            self.file_structure
+                .write_all(&[0; 1024])
+                .unwrap();
+            self.file_structure
+                .seek(SeekFrom::Start(0));
+            superblock.next_structure_free_block = superblock.next_structure_free_block + 1024;
+        }
+
+        let edge_offset = disk_node.list_edges_offset + std::mem::size_of::<DiskEdge>() as u64 * disk_node.number_of_edges;
+
+        let data_offset = superblock.next_data_free_block;
+        
+        let disk_edge: DiskEdge = DiskEdge::new(data_offset, std::mem::size_of::<W>() as u64, edge.get_target());
+
+        let disk_edge_bytes: &[u8] = unsafe{
+            std::slice::from_raw_parts(&disk_edge as *const DiskEdge as *const u8,
+                std::mem::size_of::<DiskEdge>())
+        };
+
+        self.file_structure.seek(SeekFrom::Start(edge_offset)).unwrap();
+        self.file_structure.write_all(disk_edge_bytes);
+        self.file_structure.seek(SeekFrom::Start(0)).unwrap();
+
+        
+        self.file_data.seek(SeekFrom::Start(data_offset));
+        let weight_data_bytes: &[u8] = unsafe {
+            std::slice::from_raw_parts((&edge.get_weight() as *const W) as *const u8, 
+                std::mem::size_of::<W>())
+        };
+        self.file_data.write_all(weight_data_bytes);
+        self.file_data.seek(SeekFrom::Start(0));
+
+    }
+
+    fn node_len(&self, node: u32) -> usize {
+        unimplemented!()
+    }
+
+    fn get_edges<'a>(&self, node: u32) -> Self::EdgeIter<'a> where W: 'a {
+        unimplemented!();
+    }
+
+    fn remove_edge<F>(&mut self, source: u32, edge: &Edge<W>, func: F) -> Result<Edge<W>, crate::GraphErrors>
+        where
+            F: Fn(&Edge<W>, &Edge<W>) -> bool {
+        unimplemented!();
+    }
+
+    fn remove_node(&mut self, target: u32) {
+        unimplemented!();
+    }
+
+    fn contains_edge(&self, source: u32, target: u32) -> Result<Edge<W>, crate::GraphErrors> {
+        unimplemented!();
+    }
+
+    fn node_count(&self) -> usize {
+        let superblock: SuperBlock = unsafe {
+            let raw_ptr = self.mmap_node.as_ptr();
+            std::ptr::read(raw_ptr as *const SuperBlock)
+        };
+        superblock.node_count as usize
+    }
+
+    fn edge_count(&self) -> usize {
+        let super_block: SuperBlock = unsafe{
+            let raw_ptr = self.mmap_node.as_ptr();
+            std::ptr::read(raw_ptr as *const SuperBlock)
+        };
+        super_block.edge_count as usize
+    }
+
+    fn increment_node_counter(&mut self) {
+        unimplemented!()
+    }
+}
+
