@@ -9,7 +9,7 @@ where
     fn add_edge_to_node(&mut self, node: u32, edge: &Edge<W>);
     fn add_node(&mut self);
     fn node_len(&self, node: u32) -> usize;
-    fn get_edges<'a>(&self, node: u32) -> Self::EdgeIter<'a> where W: 'a;
+    fn get_edges<'a>(&'a self, node: u32) -> Self::EdgeIter<'a> where W: 'a;
     fn remove_edge<F>(&mut self, source: u32, edge: &Edge<W>, func: F) -> Result<Edge<W>, GraphErrors>
     where
         F: Fn(&Edge<W>, &Edge<W>) -> bool;

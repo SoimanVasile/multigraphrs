@@ -15,6 +15,7 @@ use crate::StorageBackend;
 use crate::Edge;
 
 
+#[derive(Debug)]
 pub struct DiskStorage<W>
 where
     W: Clone + std::cmp::PartialEq + FromDiskBytes
@@ -106,12 +107,12 @@ where
         super_block
     }
 
-    pub fn calculate_node_offset(&mut self, node_id: u64) -> u64{
+    pub fn calculate_node_offset(&self, node_id: &u64) -> u64{
         1024 + (node_id * std::mem::size_of::<DiskNode>() as u64)
     }
-    pub fn write_node_in_file(&mut self, disk_node: &DiskNode, offset: &u64){
+    pub fn write_disk_node(&mut self, disk_node: &DiskNode, offset: &u64){
         self.file_node.seek(SeekFrom::Start(*offset));
-        self.file_node.write_all(bytemuck::bytes_of(disk_node));
+        self.file_node.write_all(disk_node.convert_to_bytes());
         self.file_node.seek(SeekFrom::Start(0));
     }
 
@@ -145,8 +146,8 @@ where
         self.file_data.write_all(weight_data_bytes);
         self.file_data.seek(SeekFrom::Start(0));
     }
-    pub fn write_superblock(&mut self, superblock_bytes: &[u8]) {
-        self.file_node.write_all(superblock_bytes);
+    pub fn write_superblock(&mut self, superblock: &SuperBlock) {
+        self.file_node.write_all(superblock.convert_to_bytes());
     }
 }
 
@@ -162,15 +163,13 @@ where
 
         let disk_node: DiskNode = DiskNode::new(new_node_id, u64::MAX, 0);
 
-        let node_offset = self.calculate_node_offset(new_node_id);
+        let node_offset = self.calculate_node_offset(&new_node_id);
 
-        self.write_node_in_file(&disk_node, &node_offset);
+        self.write_disk_node(&disk_node, &node_offset);
 
         superblock.increment_node_counter();
 
-        let superblock_bytes = superblock.get_super_block_bytes();
-
-        self.write_superblock(superblock_bytes);
+        self.write_superblock(&superblock);
     }
 
     fn add_edge_to_node(&mut self, node: u32, edge: &Edge<W>) {
@@ -178,7 +177,7 @@ where
         // gets the superblock from node
         let mut superblock: SuperBlock = self.get_super_block();
 
-        let node_offset = self.calculate_node_offset(node as u64);
+        let node_offset = self.calculate_node_offset(&(node as u64));
         let mut disk_node = self.get_disk_node(&node_offset);
 
         if disk_node.list_edges_offset == u64::MAX{
@@ -203,14 +202,25 @@ where
         //converts the weight of the edge into bytes and then writes into 
         let weight_data_bytes: &[u8] = edge.convert_to_bytes();
         self.write_weight(weight_data_bytes, &data_offset);
+
+        superblock.next_data_free_block += weight_data_bytes.len() as u64;
+
+        disk_node.number_of_edges+=1;
+        self.write_disk_node(&disk_node, &node_offset);
+        superblock.edge_count+=1;
+        self.write_superblock(&superblock);
     }
 
     fn node_len(&self, node: u32) -> usize {
-        unimplemented!()
+        let node_offset = self.calculate_node_offset(&(node as u64));
+        let disk_node: DiskNode = self.get_disk_node(&node_offset);
+        disk_node.get_number_of_edges() as usize
     }
 
-    fn get_edges<'a>(&self, node: u32) -> Self::EdgeIter<'a> where W: 'a {
-        unimplemented!();
+    fn get_edges<'a>(&'a self, node: u32) -> Self::EdgeIter<'a> where W: 'a {
+        let node_offset = self.calculate_node_offset(&(node as u64));
+        let disk_node: DiskNode = self.get_disk_node(&node_offset);
+        DiskEdgeIterator::new(self, &disk_node.get_edge_offset(), &disk_node.get_number_of_edges())
     }
 
     fn remove_edge<F>(&mut self, source: u32, edge: &Edge<W>, func: F) -> Result<Edge<W>, crate::GraphErrors>

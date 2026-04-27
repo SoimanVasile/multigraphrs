@@ -35,7 +35,7 @@ where
     pub fn convert_to_bytes(&self) -> &[u8]{
         unsafe{
         std::slice::from_raw_parts(
-            (&self.get_weight() as *const W) as *const u8, 
+            (&self.weight as *const W) as *const u8, 
             std::mem::size_of::<W>())
         }
     }

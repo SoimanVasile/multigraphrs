@@ -43,7 +43,7 @@ where
         self.adjacency_list[node as usize].len()
     }
 
-    fn get_edges<'a>(&self, node: u32) -> Self::EdgeIter<'a> where W: 'a {
+    fn get_edges<'a>(&self, node: u32) -> Self::EdgeIter<'a> where W: 'a{
         self.adjacency_list[node as usize].clone().into_iter()
     }
 

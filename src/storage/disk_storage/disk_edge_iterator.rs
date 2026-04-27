@@ -3,6 +3,7 @@ use crate::storage::disk_storage::from_disk_bytes::FromDiskBytes;
 use crate::storage::disk_storage::disk_multigraph::DiskStorage;
 use crate::Edge;
 
+#[derive(Clone, Debug)]
 pub struct DiskEdgeIterator<'a, W>
 where
     W: Clone + std::cmp::PartialEq + FromDiskBytes
@@ -12,6 +13,14 @@ where
     edges_left: u64,
 }
 
+impl<'a, W> DiskEdgeIterator<'a, W>
+where
+    W: Clone + std::cmp::PartialEq + FromDiskBytes
+{
+    pub fn new(mmap_ref: &'a DiskStorage<W>, offset: &u64, number_of_edges: &u64) -> DiskEdgeIterator<'a, W>{
+        DiskEdgeIterator{mmap_ref, current_offset: offset.clone(), edges_left: number_of_edges.clone()}
+    }
+}
 impl<'a, W> Iterator for DiskEdgeIterator<'a, W>
 where
     W: Clone + PartialEq + FromDiskBytes{

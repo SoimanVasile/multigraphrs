@@ -43,7 +43,7 @@ impl SuperBlock {
         self.node_count+=1;
     }
 
-    pub fn get_super_block_bytes(&self) -> &[u8]{
+    pub fn convert_to_bytes(&self) -> &[u8]{
         unsafe{
             std::slice::from_raw_parts(
                 self as *const SuperBlock as *const u8,

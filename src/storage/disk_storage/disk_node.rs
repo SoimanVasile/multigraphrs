@@ -20,6 +20,12 @@ impl DiskNode{
     pub fn get_number_of_edges(&self) -> u64{
         self.number_of_edges
     }
+
+    pub fn convert_to_bytes(&self) -> &[u8]{
+        unsafe{
+            std::slice::from_raw_parts(self as *const DiskNode as *const u8, std::mem::size_of::<DiskNode>())
+        }
+    }
 }
 
 
