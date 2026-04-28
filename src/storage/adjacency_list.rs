@@ -1,11 +1,15 @@
 use crate::core::edge::Edge;
 use crate::core::graph_errors::GraphErrors;
 use crate::storage::storage_backend::StorageBackend;
+
 pub struct RamStorage<W>
 where
     W: Clone + std::cmp::PartialEq,
 {
     adjacency_list: Vec<Vec<Edge<W>>>,
+    /// Tracks incoming edges: reverse_adjacency_list[node] = list of nodes that have edges TO this node.
+    /// Used by directed strategies for O(degree) remove_node.
+    reverse_adjacency_list: Vec<Vec<u32>>,
     number_of_nodes: usize,
     number_of_edges: usize,
 }
@@ -15,7 +19,12 @@ where
     W: Clone + std::cmp::PartialEq,
 {
     pub fn new() -> RamStorage<W>{
-        RamStorage{adjacency_list: Vec::new(), number_of_nodes: 0, number_of_edges: 0}
+        RamStorage{
+            adjacency_list: Vec::new(),
+            reverse_adjacency_list: Vec::new(),
+            number_of_nodes: 0,
+            number_of_edges: 0,
+        }
     }
 
     pub fn get_edges_ref(&self, source: u32) -> &Vec<Edge<W>>{
@@ -37,6 +46,7 @@ where
     fn add_node(&mut self){
         self.number_of_nodes+=1;
         self.adjacency_list.push(Vec::new());
+        self.reverse_adjacency_list.push(Vec::new());
     }
 
     fn node_len(&self, node: u32) -> usize{
@@ -62,20 +72,6 @@ where
         }
     }
 
-    fn remove_node(&mut self, target: u32) {
-        self.number_of_nodes -=1;
-        self.number_of_edges -=self.adjacency_list[target as usize].len();
-        self.adjacency_list[target as usize].clear();
-        
-        for list in &mut self.adjacency_list{
-            let initial_len = list.len();
-            list.retain(
-                |e| e.target != target
-            );
-            self.number_of_edges -= initial_len - list.len();
-        }
-    }
-
     fn contains_edge(&self, source: u32, target: u32) ->Result<Edge<W>, GraphErrors>{
         match self.adjacency_list[source as usize].iter().position(|e| e.get_target() == target) {
             Some(t) => Ok(self.adjacency_list[source as usize][t].clone()),
@@ -93,5 +89,44 @@ where
 
     fn increment_node_counter(&mut self) {
         self.number_of_nodes+=1;
+    }
+
+    // --- New primitives for strategy-driven remove_node ---
+
+    fn clear_node_edges(&mut self, node: u32) {
+        let count = self.adjacency_list[node as usize].len();
+        self.number_of_edges -= count;
+        self.adjacency_list[node as usize].clear();
+    }
+
+    fn remove_edge_by_target(&mut self, source: u32, target: u32) {
+        let list = &mut self.adjacency_list[source as usize];
+        if let Some(pos) = list.iter().position(|e| e.get_target() == target) {
+            list.swap_remove(pos);
+            self.number_of_edges -= 1;
+        }
+    }
+
+    fn add_reverse_edge(&mut self, source: u32, origin: u32) {
+        self.reverse_adjacency_list[source as usize].push(origin);
+    }
+
+    fn get_reverse_edges(&self, node: u32) -> Vec<u32> {
+        self.reverse_adjacency_list[node as usize].clone()
+    }
+
+    fn clear_reverse_edges(&mut self, node: u32) {
+        self.reverse_adjacency_list[node as usize].clear();
+    }
+
+    fn remove_reverse_edge(&mut self, source: u32, origin: u32) {
+        let list = &mut self.reverse_adjacency_list[source as usize];
+        if let Some(pos) = list.iter().position(|&id| id == origin) {
+            list.swap_remove(pos);
+        }
+    }
+
+    fn decrement_node_counter(&mut self) {
+        self.number_of_nodes -= 1;
     }
 }

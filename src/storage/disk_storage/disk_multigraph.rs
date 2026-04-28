@@ -8,6 +8,7 @@ use std::io::SeekFrom;
 
 use crate::storage::disk_storage::disk_edge_iterator::DiskEdgeIterator;
 use crate::storage::disk_storage::from_disk_bytes::FromDiskBytes;
+use crate::storage::disk_storage::super_block;
 use crate::storage::disk_storage::super_block::SuperBlock;
 use crate::storage::disk_storage::disk_edge::DiskEdge;
 use crate::storage::disk_storage::disk_node::DiskNode;
@@ -110,14 +111,16 @@ where
     pub fn calculate_node_offset(&self, node_id: &u64) -> u64{
         1024 + (node_id * std::mem::size_of::<DiskNode>() as u64)
     }
-    pub fn write_disk_node(&mut self, disk_node: &DiskNode, offset: &u64){
-        self.file_node.seek(SeekFrom::Start(*offset));
+    pub fn write_disk_node(&mut self, disk_node: &DiskNode, node: &u64){
+        let offset = self.calculate_node_offset(node);
+        self.file_node.seek(SeekFrom::Start(offset));
         self.file_node.write_all(disk_node.convert_to_bytes());
         self.file_node.seek(SeekFrom::Start(0));
     }
 
-    pub fn get_disk_node(&self, offset: &u64) -> DiskNode{
-        let disk_node_bytes: &[u8]= &self.mmap_node[*offset as usize .. *offset as usize + std::mem::size_of::<DiskNode>()];
+    pub fn get_disk_node(&self, source: &u64) -> DiskNode{
+        let offset = self.calculate_node_offset(source);
+        let disk_node_bytes: &[u8]= &self.mmap_node[offset as usize .. offset as usize + std::mem::size_of::<DiskNode>()];
         let disk_node: &DiskNode = bytemuck::from_bytes(disk_node_bytes);
         disk_node.clone()
     }
@@ -147,6 +150,7 @@ where
         self.file_data.seek(SeekFrom::Start(0));
     }
     pub fn write_superblock(&mut self, superblock: &SuperBlock) {
+        self.file_node.seek(SeekFrom::Start(0));
         self.file_node.write_all(superblock.convert_to_bytes());
     }
 }
@@ -160,12 +164,8 @@ where
         let mut superblock: SuperBlock = self.get_super_block();
 
         let new_node_id = superblock.get_node_count();
-
         let disk_node: DiskNode = DiskNode::new(new_node_id, u64::MAX, 0);
-
-        let node_offset = self.calculate_node_offset(&new_node_id);
-
-        self.write_disk_node(&disk_node, &node_offset);
+        self.write_disk_node(&disk_node, &(new_node_id));
 
         superblock.increment_node_counter();
 
@@ -177,8 +177,7 @@ where
         // gets the superblock from node
         let mut superblock: SuperBlock = self.get_super_block();
 
-        let node_offset = self.calculate_node_offset(&(node as u64));
-        let mut disk_node = self.get_disk_node(&node_offset);
+        let mut disk_node = self.get_disk_node(&(node as u64));
 
         if disk_node.list_edges_offset == u64::MAX{
 
@@ -206,20 +205,18 @@ where
         superblock.next_data_free_block += weight_data_bytes.len() as u64;
 
         disk_node.number_of_edges+=1;
-        self.write_disk_node(&disk_node, &node_offset);
+        self.write_disk_node(&disk_node, &(node as u64));
         superblock.edge_count+=1;
         self.write_superblock(&superblock);
     }
 
     fn node_len(&self, node: u32) -> usize {
-        let node_offset = self.calculate_node_offset(&(node as u64));
-        let disk_node: DiskNode = self.get_disk_node(&node_offset);
+        let disk_node: DiskNode = self.get_disk_node(&(node as u64));
         disk_node.get_number_of_edges() as usize
     }
 
     fn get_edges<'a>(&'a self, node: u32) -> Self::EdgeIter<'a> where W: 'a {
-        let node_offset = self.calculate_node_offset(&(node as u64));
-        let disk_node: DiskNode = self.get_disk_node(&node_offset);
+        let disk_node: DiskNode = self.get_disk_node(&(node as u64));
         DiskEdgeIterator::new(self, &disk_node.get_edge_offset(), &disk_node.get_number_of_edges())
     }
 
@@ -229,32 +226,66 @@ where
         unimplemented!();
     }
 
-    fn remove_node(&mut self, target: u32) {
-        unimplemented!();
-    }
-
     fn contains_edge(&self, source: u32, target: u32) -> Result<Edge<W>, crate::GraphErrors> {
-        unimplemented!();
+        let _disk_node: DiskNode = self.get_disk_node(&(source as u64));
+
+        let edges = self.get_edges(source);
+
+        for edge in edges{
+            if edge.get_target() == target{
+                return Ok(edge);
+            }
+        }
+
+        Err(crate::GraphErrors::EdgeDoesntExists)
     }
 
     fn node_count(&self) -> usize {
-        let superblock: SuperBlock = unsafe {
-            let raw_ptr = self.mmap_node.as_ptr();
-            std::ptr::read(raw_ptr as *const SuperBlock)
-        };
+        let superblock = self.get_super_block();
         superblock.node_count as usize
     }
 
     fn edge_count(&self) -> usize {
-        let super_block: SuperBlock = unsafe{
-            let raw_ptr = self.mmap_node.as_ptr();
-            std::ptr::read(raw_ptr as *const SuperBlock)
-        };
-        super_block.edge_count as usize
+        let superblock = self.get_super_block();
+        superblock.edge_count as usize
     }
 
     fn increment_node_counter(&mut self) {
-        unimplemented!()
+        let mut super_block = self.get_super_block();
+        super_block.increment_node_counter();
+        self.write_superblock(&super_block);
+    }
+
+    // --- Stubs for strategy-driven remove_node (TODO: implement for disk) ---
+
+    fn clear_node_edges(&mut self, _node: u32) {
+        unimplemented!("DiskStorage::clear_node_edges");
+    }
+
+    fn remove_edge_by_target(&mut self, _source: u32, _target: u32) {
+        unimplemented!("DiskStorage::remove_edge_by_target");
+    }
+
+    fn add_reverse_edge(&mut self, _source: u32, _origin: u32) {
+        // No-op for now: disk storage doesn't maintain reverse index yet
+    }
+
+    fn get_reverse_edges(&self, _node: u32) -> Vec<u32> {
+        unimplemented!("DiskStorage::get_reverse_edges");
+    }
+
+    fn clear_reverse_edges(&mut self, _node: u32) {
+        // No-op for now
+    }
+
+    fn remove_reverse_edge(&mut self, _source: u32, _origin: u32) {
+        // No-op for now
+    }
+
+    fn decrement_node_counter(&mut self) {
+        let mut super_block = self.get_super_block();
+        super_block.node_count -= 1;
+        self.write_superblock(&super_block);
     }
 }
 

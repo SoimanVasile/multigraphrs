@@ -127,7 +127,7 @@ where
         self.removed_ids.push(index);
         
         let removed_node = self.reversed_hashed_nodes[index as usize].take().unwrap();
-        self.adjacency_list.remove_node(index);
+        S::remove_node(&mut self.adjacency_list, index);
         
         Ok(removed_node)
     }

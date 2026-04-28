@@ -15,4 +15,8 @@ where
     fn add_edge(graph: &mut impl StorageBackend<W>, source: u32, target: u32, weight: &W) -> Result<Edge<W>, GraphErrors>;
 
     fn remove_edge(graph: &mut impl StorageBackend<W>, source: u32, target: u32, weight: &W ) -> Result<Edge<W>, GraphErrors>;
+
+    /// Removes a node and all edges connected to it.
+    /// The strategy determines how to efficiently find and remove incoming edges.
+    fn remove_node(graph: &mut impl StorageBackend<W>, node_id: u32);
 }

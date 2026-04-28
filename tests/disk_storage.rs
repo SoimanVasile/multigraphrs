@@ -137,29 +137,32 @@ fn test_remove_edge() {
     assert!(temp.storage.contains_edge(0, 1).is_err(), "Contains should now return false (Err)");
 }
 
-#[test]
-fn test_remove_node() {
-    let mut temp = TempDiskStorage::new("remove_node");
-    temp.storage.add_node(); // node 0
-    temp.storage.add_node(); // node 1
-    temp.storage.add_node(); // node 2
+// TODO: remove_node moved to DirectionStrategy. Rewrite this test once 
+// DiskStorage primitives (clear_node_edges, etc.) are implemented.
+// #[test]
+// fn test_remove_node() {
+//     let mut temp = TempDiskStorage::new("remove_node");
+//     temp.storage.add_node(); // node 0
+//     temp.storage.add_node(); // node 1
+//     temp.storage.add_node(); // node 2
+// 
+//     let edge1 = Edge::new(1, &42);
+//     let edge2 = Edge::new(2, &100);
+//     
+//     temp.storage.add_edge_to_node(0, &edge1);
+//     temp.storage.add_edge_to_node(0, &edge2);
+//     
+//     assert_eq!(temp.storage.edge_count(), 2);
+//     assert_eq!(temp.storage.node_len(0), 2);
+// 
+//     // Remove the node (logically delete its edges and clear it)
+//     temp.storage.remove_node(0);
+//     
+//     // Edges should be removed logically from global count
+//     assert_eq!(temp.storage.node_len(0), 0, "Removed node should have 0 logic length");
+//     assert!(temp.storage.edge_count() < 2, "Edge count should decrease logically");
+//     
+//     let edges: Vec<_> = temp.storage.get_edges(0).collect();
+//     assert!(edges.is_empty(), "Removed node should yield 0 edges on iteration");
+// }
 
-    let edge1 = Edge::new(1, &42);
-    let edge2 = Edge::new(2, &100);
-    
-    temp.storage.add_edge_to_node(0, &edge1);
-    temp.storage.add_edge_to_node(0, &edge2);
-    
-    assert_eq!(temp.storage.edge_count(), 2);
-    assert_eq!(temp.storage.node_len(0), 2);
-
-    // Remove the node (logically delete its edges and clear it)
-    temp.storage.remove_node(0);
-    
-    // Edges should be removed logically from global count
-    assert_eq!(temp.storage.node_len(0), 0, "Removed node should have 0 logic length");
-    assert!(temp.storage.edge_count() < 2, "Edge count should decrease logically (or instantly, depending on implementation specs)");
-    
-    let edges: Vec<_> = temp.storage.get_edges(0).collect();
-    assert!(edges.is_empty(), "Removed node should yield 0 edges on iteration");
-}

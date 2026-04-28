@@ -47,4 +47,20 @@ where
             return edge_1.get_target() == edge_2.get_target();
         })
     }
+
+    /// Removes a node and all connected edges. O(degree(node)).
+    ///
+    /// Since the graph is undirected, every edge in node's outgoing list implies
+    /// a reverse edge in the neighbor's list. We use this to avoid a full scan.
+    fn remove_node(graph: &mut impl StorageBackend<u32>, node_id: u32) {
+        // Collect outgoing edges first (tells us exactly who has edges back to us)
+        let edges: Vec<Edge<u32>> = graph.get_edges(node_id).collect();
+        for edge in edges {
+            // Remove the reverse edge from each neighbor's list
+            graph.remove_edge_by_target(edge.get_target(), node_id);
+        }
+        // Clear our own outgoing edges
+        graph.clear_node_edges(node_id);
+        graph.decrement_node_counter();
+    }
 }
