@@ -164,8 +164,12 @@ where
         *start_offset + *edge_numbers * size_of::<DiskEdge>() as u64
     }
 
-    pub fn write_disk_edge(&mut self, disk_edge_bytes: &[u8], edge_offset: &u64){
-        self.mmap_structure[*edge_offset as usize .. *edge_offset as usize + disk_edge_bytes.len()].copy_from_slice(disk_edge_bytes);
+    pub fn write_disk_edge(&mut self, disk_node: &DiskNode, disk_edge: &DiskEdge){
+        let index = disk_node.number_of_edges;
+        let edge_offset = disk_node.get_edge_offset() + index * size_of::<DiskEdge>() as u64;
+        
+        let disk_edge_bytes: &[u8] = disk_edge.convert_into_bytes();
+        self.mmap_structure[edge_offset as usize .. edge_offset as usize + disk_edge_bytes.len()].copy_from_slice(disk_edge_bytes);
     }
 
     pub fn write_weight(&mut self, weight_data_bytes: &[u8], weight_offset: &u64){
@@ -192,7 +196,7 @@ where
         self.write_disk_node(disk_node, &disk_node.node_idx);
     }
 
-    pub fn swap_remove_disk(&mut self, disk_node: &mut DiskNode, edge_number: &u64){
+    pub fn swap_remove_disk_edge(&mut self, disk_node: &mut DiskNode, edge_number: &u64){
         let last_index = disk_node.number_of_edges - 1;
 
         // only copy if we're not already removing the last edge
@@ -250,14 +254,12 @@ where
 
         //TODO implement the check if the edge block is full
 
-        let edge_offset = self.calculate_edge_offset(&disk_node.get_edge_offset(), &disk_node.get_number_of_edges());
         let data_offset = superblock.get_free_block_data();
         
         // creates the disk edge and then conversts it into bytes and then writes it into
         // file_structure
         let disk_edge: DiskEdge = DiskEdge::new(data_offset, std::mem::size_of::<W>() as u64, edge.get_target());
-        let disk_edge_bytes: &[u8] = disk_edge.convert_into_bytes();
-        self.write_disk_edge(disk_edge_bytes, &edge_offset);
+        self.write_disk_edge(&disk_node, &disk_edge);
         
         //converts the weight of the edge into bytes and then writes into 
         let weight_data_bytes: &[u8] = edge.convert_to_bytes();
@@ -289,7 +291,7 @@ where
 
         if let Some((idk, found_edge)) = edges.enumerate().find(|(_,e)| func(&e, edge)){
             let mut disk_node: DiskNode = self.get_disk_node(&source);
-            self.swap_remove_disk(&mut disk_node, &(idk as u64));
+            self.swap_remove_disk_edge(&mut disk_node, &(idk as u64));
             return Ok(found_edge);
         }
         Err(GraphErrors::EdgeDoesntExists)
@@ -343,7 +345,7 @@ where
             let disk_edge: &DiskEdge = bytemuck::from_bytes(struct_bytes);
 
             if disk_edge.node == target{
-                self.swap_remove_disk(&mut disk_node, &(edge_number));
+                self.swap_remove_disk_edge(&mut disk_node, &(edge_number));
                 return;
             }
         }
