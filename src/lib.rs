@@ -53,14 +53,14 @@ where
     K: Eq + Hash + Clone,
     W: Clone + std::cmp::PartialEq,
 {
-    hashed_nodes: HashMap<K, u32>,
+    hashed_nodes: HashMap<K, u64>,
     pub(crate) reversed_hashed_nodes: Vec<Option<K>>,
     /// The internal adjacency list mapping a node to its outgoing edges.
     pub(crate) adjacency_list: B,
     /// Marker to keep track of the specific strategy `S` and weight `W`.
     _marker: PhantomData<(S, W)>,
-    pub(crate) next_id: u32,
-    pub(crate) removed_ids: Vec<u32>,
+    pub(crate) next_id: u64,
+    pub(crate) removed_ids: Vec<u64>,
 }
 
 pub type RamMultiGraph<K, W, Dir> = MultiGraph<K, W, Dir, RamStorage<W>>;
@@ -108,7 +108,7 @@ where
         }
         
         self.hashed_nodes.insert(source.clone(), node_id);
-        if node_id >= self.reversed_hashed_nodes.len() as u32{
+        if node_id >= self.reversed_hashed_nodes.len() as u64{
             self.reversed_hashed_nodes.push(Some(source.clone()));
         }
         else{

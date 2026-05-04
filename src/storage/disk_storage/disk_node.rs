@@ -7,11 +7,13 @@ pub struct DiskNode{
     pub node_idx: u64,
     pub list_edges_offset: u64,
     pub number_of_edges: u64,
+    pub list_reverse_edges_offset: u64,
+    pub number_of_reverse_edges: u64,
 }
 
 impl DiskNode{
-    pub fn new(node_idx: u64, list_edges_offset: u64, number_of_edges: u64) -> Self{
-        Self { node_idx, list_edges_offset, number_of_edges }   
+    pub fn new(node_idx: u64, list_edges_offset: u64,list_reverse_edges_offset: u64) -> Self{
+        Self { node_idx, list_edges_offset, number_of_edges: 0, list_reverse_edges_offset, number_of_reverse_edges: 0,}   
     }
     pub fn get_edge_offset(&self) -> u64{
         self.list_edges_offset

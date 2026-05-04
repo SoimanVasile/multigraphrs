@@ -25,11 +25,7 @@ impl TempDiskStorage {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 
-        let struct_path = dir.join("struct.mmap");
-        let data_path = dir.join("data.mmap");
-        let node_path = dir.join("node.mmap");
-
-        let storage = DiskStorage::<u32>::new(&struct_path, &data_path, &node_path);
+        let storage = DiskStorage::<u32>::new(&dir);
 
         Self { storage, dir }
     }
@@ -49,7 +45,7 @@ fn test_add_node_increases_node_count() {
     temp.storage.add_node();
     assert_eq!(temp.storage.node_count(), 1, "Node count should increment after add_node");
     temp.storage.add_node();
-    // assert_eq!(temp.storage.node_count(), 2, "Node count should be 2 after second add_node");
+    assert_eq!(temp.storage.node_count(), 2, "Node count should be 2 after second add_node");
 }
 
 #[test]
@@ -137,32 +133,93 @@ fn test_remove_edge() {
     assert!(temp.storage.contains_edge(0, 1).is_err(), "Contains should now return false (Err)");
 }
 
-// TODO: remove_node moved to DirectionStrategy. Rewrite this test once 
-// DiskStorage primitives (clear_node_edges, etc.) are implemented.
-// #[test]
-// fn test_remove_node() {
-//     let mut temp = TempDiskStorage::new("remove_node");
-//     temp.storage.add_node(); // node 0
-//     temp.storage.add_node(); // node 1
-//     temp.storage.add_node(); // node 2
-// 
-//     let edge1 = Edge::new(1, &42);
-//     let edge2 = Edge::new(2, &100);
-//     
-//     temp.storage.add_edge_to_node(0, &edge1);
-//     temp.storage.add_edge_to_node(0, &edge2);
-//     
-//     assert_eq!(temp.storage.edge_count(), 2);
-//     assert_eq!(temp.storage.node_len(0), 2);
-// 
-//     // Remove the node (logically delete its edges and clear it)
-//     temp.storage.remove_node(0);
-//     
-//     // Edges should be removed logically from global count
-//     assert_eq!(temp.storage.node_len(0), 0, "Removed node should have 0 logic length");
-//     assert!(temp.storage.edge_count() < 2, "Edge count should decrease logically");
-//     
-//     let edges: Vec<_> = temp.storage.get_edges(0).collect();
-//     assert!(edges.is_empty(), "Removed node should yield 0 edges on iteration");
-// }
+#[test]
+fn test_remove_edge_by_target() {
+    let mut temp = TempDiskStorage::new("remove_edge_by_target");
+    temp.storage.add_node(); // node 0
+    temp.storage.add_node(); // node 1
+    temp.storage.add_node(); // node 2
+
+    let edge1 = Edge::new(1, &42);
+    let edge2 = Edge::new(2, &100);
+    temp.storage.add_edge_to_node(0, &edge1);
+    temp.storage.add_edge_to_node(0, &edge2);
+
+    assert_eq!(temp.storage.node_len(0), 2);
+
+    temp.storage.remove_edge_by_target(0, 1);
+
+    assert_eq!(temp.storage.node_len(0), 1, "Node should have 1 edge after removal");
+    assert!(temp.storage.contains_edge(0, 1).is_err(), "Removed edge should no longer exist");
+    assert!(temp.storage.contains_edge(0, 2).is_ok(), "Other edge should still exist");
+}
+
+#[test]
+fn test_clear_node_edges() {
+    let mut temp = TempDiskStorage::new("clear_node_edges");
+    temp.storage.add_node(); // node 0
+    temp.storage.add_node(); // node 1
+    temp.storage.add_node(); // node 2
+
+    let edge1 = Edge::new(1, &42);
+    let edge2 = Edge::new(2, &100);
+    
+    temp.storage.add_edge_to_node(0, &edge1);
+    temp.storage.add_edge_to_node(0, &edge2);
+    
+    assert_eq!(temp.storage.node_len(0), 2);
+
+    temp.storage.clear_node_edges(0);
+
+    assert_eq!(temp.storage.node_len(0), 0, "Cleared node should have 0 edges");
+    let edges: Vec<_> = temp.storage.get_edges(0).collect();
+    assert!(edges.is_empty(), "Cleared node should yield 0 edges on iteration");
+}
+
+#[test]
+fn test_add_reverse_edge() {
+    let mut temp = TempDiskStorage::new("add_reverse_edge");
+    temp.storage.add_node(); // node 0
+    temp.storage.add_node(); // node 1
+
+    let edge = Edge::new(1, &42);
+    temp.storage.add_edge_to_node(0, &edge);
+    temp.storage.add_reverse_edge(0, 1);
+
+    let reverse = temp.storage.get_reverse_edges(1);
+    assert_eq!(reverse.len(), 1, "Should have 1 reverse edge");
+    assert_eq!(reverse[0], 0, "Reverse edge should point back to source");
+}
+
+#[test]
+fn test_get_reverse_edges() {
+    let mut temp = TempDiskStorage::new("get_reverse_edges");
+    temp.storage.add_node(); // node 0
+    temp.storage.add_node(); // node 1
+    temp.storage.add_node(); // node 2
+
+    let edge1 = Edge::new(2, &42);
+    let edge2 = Edge::new(2, &100);
+    temp.storage.add_edge_to_node(0, &edge1);
+    temp.storage.add_edge_to_node(1, &edge2);
+
+    temp.storage.add_reverse_edge(0, 2);
+    temp.storage.add_reverse_edge(1, 2);
+
+    let reverse = temp.storage.get_reverse_edges(2);
+    assert_eq!(reverse.len(), 2, "Node 2 should have 2 reverse edges");
+    assert!(reverse.contains(&0), "Reverse edges should contain node 0");
+    assert!(reverse.contains(&1), "Reverse edges should contain node 1");
+}
+
+#[test]
+fn test_decrement_node_counter() {
+    let mut temp = TempDiskStorage::new("decrement_node");
+    temp.storage.add_node();
+    temp.storage.add_node();
+    assert_eq!(temp.storage.node_count(), 2);
+
+    temp.storage.decrement_node_counter();
+    assert_eq!(temp.storage.node_count(), 1, "Node count should decrement");
+}
 

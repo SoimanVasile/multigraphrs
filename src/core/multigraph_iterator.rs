@@ -13,7 +13,7 @@ where
     B: StorageBackend<W>
 {
     pub(crate) graph: &'a MultiGraph<K, W, S, B>,
-    pub(crate) index: u32
+    pub(crate) index: u64
 }
 
 impl<'a, K, W, S, B> Iterator for NodeIter<'a, K, W, S, B>

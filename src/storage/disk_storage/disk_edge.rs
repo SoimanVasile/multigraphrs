@@ -6,13 +6,12 @@ use bytemuck::Zeroable;
 pub struct DiskEdge{
     pub weight_offset: u64,
     pub weight_len: u64,
-    pub node: u32,
-    pub _padding: [u8; 4],
+    pub node: u64,
 }
 
 impl DiskEdge{
-    pub fn new(weight_offset: u64, weight_len: u64, node: u32) -> DiskEdge{
-        DiskEdge { weight_offset, weight_len, node, _padding: [0; 4]}
+    pub fn new(weight_offset: u64, weight_len: u64, node: u64) -> DiskEdge{
+        DiskEdge { weight_offset, weight_len, node}
     }
 
     pub fn convert_into_bytes(&self) -> &[u8]{

@@ -22,8 +22,8 @@ where
     /// is missing from the graph's adjacency list.
     fn add_edge(
         graph: &mut impl StorageBackend<u32>,
-        source: u32, 
-        target: u32, 
+        source: u64, 
+        target: u64, 
         weight: &u32
     ) -> Result<Edge<u32>, crate::core::graph_errors::GraphErrors> {
 
@@ -37,7 +37,7 @@ where
         Ok(edge)
     }
 
-    fn remove_edge(graph: &mut impl StorageBackend<u32>, source: u32, target: u32, weight: &u32 ) -> Result<Edge<u32>, crate::core::graph_errors::GraphErrors> {
+    fn remove_edge(graph: &mut impl StorageBackend<u32>, source: u64, target: u64, weight: &u32 ) -> Result<Edge<u32>, crate::core::graph_errors::GraphErrors> {
         let edge = Edge::new(target, weight);
         let reverse_edge = Edge::new(source, weight);
         graph.remove_edge(target, &reverse_edge, |edge_1: &Edge<u32>, edge_2: &Edge<u32>| -> bool {
@@ -52,7 +52,7 @@ where
     ///
     /// Since the graph is undirected, every edge in node's outgoing list implies
     /// a reverse edge in the neighbor's list. We use this to avoid a full scan.
-    fn remove_node(graph: &mut impl StorageBackend<u32>, node_id: u32) {
+    fn remove_node(graph: &mut impl StorageBackend<u32>, node_id: u64) {
         // Collect outgoing edges first (tells us exactly who has edges back to us)
         let edges: Vec<Edge<u32>> = graph.get_edges(node_id).collect();
         for edge in edges {

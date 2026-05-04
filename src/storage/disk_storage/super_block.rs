@@ -12,8 +12,9 @@ pub struct SuperBlock{
 
     pub next_structure_free_block: u64,
     pub next_data_free_block: u64,
+    pub next_reverse_structure_free_block: u64,
 
-    pub _padding: [u8; 984],
+    pub _padding: [u8; 976],
 }
 
 unsafe impl Pod for SuperBlock{}
@@ -29,8 +30,9 @@ impl SuperBlock {
 
             next_structure_free_block: 0,
             next_data_free_block: 0,
+            next_reverse_structure_free_block: 0,
 
-            _padding: [0; 984],
+            _padding: [0; 976],
 
         }
     }
@@ -62,5 +64,16 @@ impl SuperBlock {
 
     pub fn get_free_block_data(&self) -> u64{
         self.next_data_free_block
+    }
+    pub fn find_next_data_free_block(&mut self, size: &u64){
+        self.next_data_free_block += *size;
+    }
+
+    pub fn get_free_block_reverse_structure(&self) -> u64{
+        self.next_reverse_structure_free_block
+    }
+
+    pub fn find_next_reverse_structure_free_block(&mut self, size: &u64){
+        self.next_reverse_structure_free_block += *size;
     }
 }

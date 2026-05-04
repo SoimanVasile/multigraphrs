@@ -21,8 +21,8 @@ impl DirectionStrategy<u32> for Directed
     /// is missing from the graph's adjacency list.
     fn add_edge(
         graph: &mut impl StorageBackend<u32>,
-        source: u32, 
-        target: u32, 
+        source: u64, 
+        target: u64, 
         weight: &u32
     ) -> Result<Edge<u32>, GraphErrors> {
 
@@ -36,7 +36,7 @@ impl DirectionStrategy<u32> for Directed
         Ok(edge)
     }
 
-    fn remove_edge(graph: &mut impl StorageBackend<u32>, source: u32, target: u32, weight: &u32 ) -> Result<Edge<u32>, GraphErrors> {
+    fn remove_edge(graph: &mut impl StorageBackend<u32>, source: u64, target: u64, weight: &u32 ) -> Result<Edge<u32>, GraphErrors> {
         let edge = Edge::new(target, weight);
         let result = graph.remove_edge(source, &edge, |edge_1: &Edge<u32>, edge_2: &Edge<u32>| -> bool {
             return edge_1.get_target() == edge_2.get_target();
@@ -52,7 +52,7 @@ impl DirectionStrategy<u32> for Directed
     ///
     /// Uses the reverse adjacency list to efficiently find and remove all
     /// incoming edges without scanning the entire graph.
-    fn remove_node(graph: &mut impl StorageBackend<u32>, node_id: u32) {
+    fn remove_node(graph: &mut impl StorageBackend<u32>, node_id: u64) {
         // 1. Remove incoming edges: use reverse list to find who points to us
         let incoming = graph.get_reverse_edges(node_id);
         for source in incoming {

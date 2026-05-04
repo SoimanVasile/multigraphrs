@@ -22,8 +22,8 @@ where
     ///
     fn add_edge(
         graph: &mut impl StorageBackend<W>,
-        source: u32, 
-        target: u32, 
+        source: u64, 
+        target: u64, 
         weight: &W
     ) -> Result<Edge<W>, GraphErrors> {
         
@@ -37,7 +37,7 @@ where
         Ok(edge)
     }
 
-    fn remove_edge(graph: &mut impl StorageBackend<W>, source: u32, target: u32, weight: &W ) -> Result<Edge<W>, GraphErrors> {
+    fn remove_edge(graph: &mut impl StorageBackend<W>, source: u64, target: u64, weight: &W ) -> Result<Edge<W>, GraphErrors> {
         let edge = Edge::new(target, weight);
         let result = graph.remove_edge(source, &edge, |edge_1: &Edge<W>, edge_2: &Edge<W>| -> bool {
             return edge_1.get_weight() == edge_2.get_weight() && edge_1.get_target() == edge_2.get_target();
@@ -53,7 +53,7 @@ where
     ///
     /// Uses the reverse adjacency list to efficiently find and remove all
     /// incoming edges without scanning the entire graph.
-    fn remove_node(graph: &mut impl StorageBackend<W>, node_id: u32) {
+    fn remove_node(graph: &mut impl StorageBackend<W>, node_id: u64) {
         // 1. Remove incoming edges: use reverse list to find who points to us
         let incoming = graph.get_reverse_edges(node_id);
         for source in incoming {

@@ -6,7 +6,7 @@ use crate::Edge;
 #[derive(Clone, Debug)]
 pub struct DiskEdgeIterator<'a, W>
 where
-    W: Clone + std::cmp::PartialEq + FromDiskBytes
+    W: Clone + std::cmp::PartialEq + FromDiskBytes,
 {
     mmap_ref: &'a DiskStorage<W>,
     current_offset: u64,
@@ -15,7 +15,7 @@ where
 
 impl<'a, W> DiskEdgeIterator<'a, W>
 where
-    W: Clone + std::cmp::PartialEq + FromDiskBytes
+    W: Clone + std::cmp::PartialEq + FromDiskBytes,
 {
     pub fn new(mmap_ref: &'a DiskStorage<W>, offset: &u64, number_of_edges: &u64) -> DiskEdgeIterator<'a, W>{
         DiskEdgeIterator{mmap_ref, current_offset: offset.clone(), edges_left: number_of_edges.clone()}
@@ -46,6 +46,47 @@ where
         self.edges_left-=1;
 
         Some(Edge::new(disk_edge.node, &weight))
+    }
+}
+
+
+pub struct DiskReverseEdgeIterator<'a, W>
+where
+    W: Clone + std::cmp::PartialEq + FromDiskBytes,
+{
+    mmap_ref: &'a DiskStorage<W>,
+    current_offset: u64,
+    edges_left: u64,
+}
+
+impl<'a, W> DiskReverseEdgeIterator<'a, W>
+where
+    W: Clone + std::cmp::PartialEq + FromDiskBytes,
+{
+    pub fn new(mmap_ref: &'a DiskStorage<W>, offset: &u64, number_of_edges: &u64) -> DiskReverseEdgeIterator<'a, W>{
+        DiskReverseEdgeIterator{mmap_ref, current_offset: offset.clone(), edges_left: number_of_edges.clone()}
+    }
+}
+impl<'a, W> Iterator for DiskReverseEdgeIterator<'a, W>
+where
+    W: Clone + PartialEq + FromDiskBytes{
+    type Item=u64;
+
+    fn next(&mut self) -> Option<<Self as Iterator>::Item>{
+        if self.edges_left == 0{
+            return None;
+        }
+        
+        let struct_bytes = &self.mmap_ref.mmap_reverse_structure[
+            self.current_offset as usize .. self.current_offset as usize + size_of::<u64>()
+        ];
+
+        let node: u64 = u64::from_le_bytes(struct_bytes.try_into().unwrap());
+        self.current_offset += size_of::<u64>() as u64;
+        
+        self.edges_left-=1;
+
+        Some(node)
     }
 }
 

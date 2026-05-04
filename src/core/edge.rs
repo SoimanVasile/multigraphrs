@@ -10,7 +10,7 @@ where
     W: Clone + std::cmp::PartialEq,
 {
     /// The destination node this edge points to.
-    pub target: u32,
+    pub target: u64,
     /// The cost, distance, or metadata associated with this edge.
     pub weight: W,
 }
@@ -20,11 +20,11 @@ where
     W: Clone + std::cmp::PartialEq,
 {
     /// Constructs a new `Edge`.
-    pub fn new(target: u32, weight: &W) -> Edge<W> {
+    pub fn new(target: u64, weight: &W) -> Edge<W> {
         Edge { target, weight: weight.clone()}
     }
 
-    pub fn get_target(&self) -> u32 {
+    pub fn get_target(&self) -> u64 {
         self.target
     }
 
