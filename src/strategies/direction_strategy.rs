@@ -14,6 +14,14 @@ where
     /// Returns the edges that were successfully created.
     fn add_edge(graph: &mut impl StorageBackend<W>, source: u64, target: u64, weight: &W) -> Result<Edge<W>, GraphErrors>;
 
+    /// Removes an edge from `source` to `target` with the given `weight`,
+    /// using strategy-specific matching and cleanup logic.
+    ///
+    /// # Returns
+    /// The removed `Edge` (**owned**) on success.
+    ///
+    /// # Errors
+    /// Returns `GraphErrors::EdgeDoesntExists` if no matching edge is found.
     fn remove_edge(graph: &mut impl StorageBackend<W>, source: u64, target: u64, weight: &W ) -> Result<Edge<W>, GraphErrors>;
 
     /// Removes a node and all edges connected to it.

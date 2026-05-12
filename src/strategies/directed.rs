@@ -36,6 +36,19 @@ impl DirectionStrategy<u32> for Directed
         Ok(edge)
     }
 
+    /// Removes a single directed edge from `source` to `target`.
+    ///
+    /// Matching is performed by target identity only (ignores weight for
+    /// unweighted graphs). Also updates the reverse adjacency index.
+    ///
+    /// # Returns
+    /// The removed `Edge` (**owned**) on success.
+    ///
+    /// # Errors
+    /// Returns `GraphErrors::EdgeDoesntExists` if no matching edge is found.
+    ///
+    /// # Panics
+    /// Panics if `source` is out of bounds in the storage backend.
     fn remove_edge(graph: &mut impl StorageBackend<u32>, source: u64, target: u64, weight: &u32 ) -> Result<Edge<u32>, GraphErrors> {
         let edge = Edge::new(target, weight);
         let result = graph.remove_edge(source, &edge, |edge_1: &Edge<u32>, edge_2: &Edge<u32>| -> bool {

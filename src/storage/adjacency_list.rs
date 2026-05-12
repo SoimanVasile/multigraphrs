@@ -2,6 +2,10 @@ use crate::core::edge::Edge;
 use crate::core::graph_errors::GraphErrors;
 use crate::storage::storage_backend::StorageBackend;
 
+/// In-memory graph storage backed by a `Vec<Vec<Edge<W>>>`.
+///
+/// All data lives in RAM. This is the default backend for `MultiGraph` and
+/// is the fastest option for graphs that fit in memory.
 pub struct RamStorage<W>
 where
     W: Clone + std::cmp::PartialEq,
@@ -18,6 +22,13 @@ impl<W> RamStorage<W>
 where
     W: Clone + std::cmp::PartialEq,
 {
+    /// Creates a new, empty `RamStorage` with no pre-allocated capacity.
+    ///
+    /// # Returns
+    /// An owned, empty `RamStorage` instance.
+    ///
+    /// # Panics
+    /// This method does not panic.
     pub fn new() -> RamStorage<W>{
         RamStorage{
             adjacency_list: Vec::new(),
@@ -27,6 +38,12 @@ where
         }
     }
 
+    /// Returns an **immutable reference** to the edge vector of `source`.
+    ///
+    /// The caller borrows from the internal adjacency list; no clone is performed.
+    ///
+    /// # Panics
+    /// Panics if `source` is out of bounds (index >= adjacency_list.len()).
     pub fn get_edges_ref(&self, source: u64) -> &Vec<Edge<W>>{
         &self.adjacency_list[source as usize]
     }
