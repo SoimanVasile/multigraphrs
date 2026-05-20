@@ -177,26 +177,6 @@ where
         disk_node.clone()
     }
 
-    /// Zeroes out the edge and reverse-edge regions for a newly allocated node.
-    ///
-    /// Called during the first edge insertion for a node to ensure the
-    /// backing memory is clean before writing.
-    ///
-    /// # Arguments
-    /// * `disk_node` - The node whose edge regions should be initialized.
-    ///
-    /// # Panics
-    /// Panics if the offsets exceed the memory map bounds.
-    pub fn initialize_disk_node(&mut self, disk_node: &DiskNode){
-
-        let offset = disk_node.list_edges_offset;
-        let reverse_offset = disk_node.list_reverse_edges_offset;
-
-        self.file_manager_edge_structure.zeroing_mmap(offset, offset + &disk_node.capacity);
-
-        self.file_manager_reverse_edge.zeroing_mmap(reverse_offset, reverse_offset + &disk_node.reverse_capacity);
-    }
-
     /// Computes the byte offset of the `edge_numbers`-th edge within a node's
     /// edge block in the structure file.
     ///
@@ -220,12 +200,11 @@ where
     ///
     /// # Panics
     /// Panics if the computed write region exceeds the structure memory map bounds.
-    pub fn write_disk_edge(&mut self, disk_node: &mut DiskNode, disk_edge: &DiskEdge) -> Result<(), std::io::Error>{
+    pub fn write_disk_edge(&mut self, disk_node: &mut DiskNode, disk_edge: &DiskEdge, super_block: &mut SuperBlock) -> Result<(), std::io::Error>{
 
         // Checks if we add this edge, it will overflow the already allocated memory and allocates
         // more if its full
         if  (disk_node.number_of_edges + 1) * size_of::<DiskEdge>() as u64 > disk_node.capacity{
-            let mut super_block = self.get_super_block();
             disk_node.capacity *= 2;
             let free_offset = super_block.get_free_block_structure();
             super_block.find_next_strcture_free_block(&disk_node.capacity);
@@ -238,7 +217,6 @@ where
 
             self.file_manager_edge_structure.copy_within(edge_offset, edge_offset_end, free_offset);
             disk_node.list_edges_offset = free_offset;
-            self.write_superblock(&super_block);
         }
 
         let index = disk_node.number_of_edges;
@@ -290,6 +268,9 @@ where
     /// # Panics
     /// Panics if the edge region exceeds the structure memory map bounds.
     pub fn remove_edges_from_node(&mut self, disk_node: &mut DiskNode)-> Result<(), std::io::Error>{
+        if disk_node.number_of_edges == 0{
+            return Ok(());
+        }
         let number_of_edges = disk_node.get_number_of_edges();
         let edges_offset = disk_node.get_edge_offset();
 
@@ -370,10 +351,12 @@ where
             //initialize the disk node and puts the padding for space and the next free edge block
             disk_node.list_edges_offset = superblock.get_free_block_structure();
             superblock.find_next_strcture_free_block(&disk_node.capacity);
+
+            if disk_node.list_edges_offset + disk_node.capacity > self.file_manager_edge_structure.file_len().unwrap(){
+                self.file_manager_edge_structure.increase_file_size();
+            }
             self.file_manager_edge_structure.zeroing_mmap(disk_node.list_edges_offset, disk_node.list_edges_offset + disk_node.capacity);
         }
-
-        //TODO implement the check if the edge block is full
 
         let data_offset = superblock.get_free_block_data();
         
@@ -381,7 +364,7 @@ where
         // file_structure
         let disk_edge: DiskEdge = DiskEdge::new(data_offset, std::mem::size_of::<W>() as u64, edge.get_target());
 
-        self.write_disk_edge(&mut disk_node, &disk_edge);
+        self.write_disk_edge(&mut disk_node, &disk_edge, &mut superblock);
         
         //converts the weight of the edge into bytes and then writes into 
         let weight_data_bytes: &[u8] = edge.convert_to_bytes();
@@ -459,8 +442,8 @@ where
         for edge_number in 0..disk_node.get_number_of_edges(){
             let edge_offset = self.calculate_edge_offset(&disk_node.get_edge_offset(), &(edge_number as u64));
 
-        let struct_bytes = self.file_manager_edge_structure.reading_bytes(edge_offset, edge_offset + std::mem::size_of::<DiskEdge>() as u64);
-        let disk_edge: &DiskEdge = bytemuck::from_bytes(struct_bytes);
+            let struct_bytes = self.file_manager_edge_structure.reading_bytes(edge_offset, edge_offset + std::mem::size_of::<DiskEdge>() as u64);
+            let disk_edge: &DiskEdge = bytemuck::from_bytes(struct_bytes);
 
             if disk_edge.node == target{
                 self.swap_remove_disk_edge(&mut disk_node, &(edge_number));
@@ -471,7 +454,7 @@ where
     }
 
     fn add_reverse_edge(&mut self, source: u64, origin: u64) {
-        let mut disk_node: DiskNode = self.get_disk_node(&origin);
+        let mut disk_node: DiskNode = self.get_disk_node(&source);
         let mut superblock: SuperBlock = self.get_super_block();
 
         // First-time initialization: allocate a reverse edge block for this node
@@ -506,7 +489,7 @@ where
 
         let edge_offset = disk_node.list_reverse_edges_offset + disk_node.number_of_reverse_edges * size_of::<u64>() as u64;
 
-        let bytes = &source.to_le_bytes();
+        let bytes = &origin.to_le_bytes();
         self.file_manager_reverse_edge.writing_bytes_to_mmap(edge_offset, edge_offset + bytes.len() as u64, bytes);
 
         disk_node.number_of_reverse_edges += 1;
@@ -521,6 +504,9 @@ where
 
     fn clear_reverse_edges(&mut self, _node: u64) {
         let mut disk_node: DiskNode = self.get_disk_node(&_node);
+        if disk_node.number_of_reverse_edges == 0{
+            return;
+        }
 
         let start = disk_node.list_reverse_edges_offset;
         let number_of_bytes = size_of::<u64>() as u64 * disk_node.number_of_reverse_edges;
