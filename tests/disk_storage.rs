@@ -184,7 +184,7 @@ fn test_add_reverse_edge() {
 
     let edge = Edge::new(1, &42);
     temp.storage.add_edge_to_node(0, &edge);
-    temp.storage.add_reverse_edge(0, 1);
+    temp.storage.add_reverse_edge(1, 0);
 
     let reverse = temp.storage.get_reverse_edges(1);
     assert_eq!(reverse.len(), 1, "Should have 1 reverse edge");
@@ -206,9 +206,9 @@ fn test_get_reverse_edges() {
     temp.storage.add_edge_to_node(1, &edge2);
     temp.storage.add_edge_to_node(3, &edge3);
 
-    temp.storage.add_reverse_edge(0, 2);
-    temp.storage.add_reverse_edge(1, 2);
-    temp.storage.add_reverse_edge(3, 2);
+    temp.storage.add_reverse_edge(2, 0);
+    temp.storage.add_reverse_edge(2, 1);
+    temp.storage.add_reverse_edge(2, 3);
 
     let reverse = temp.storage.get_reverse_edges(2);
     println!("{:?}", reverse);
@@ -247,7 +247,7 @@ fn test_reverse_edge_reallocation_single() {
 
     // Add 129 reverse edges to node 0 — this forces exactly one reallocation.
     for src in 1..=total_sources {
-        temp.storage.add_reverse_edge(src, 0);
+        temp.storage.add_reverse_edge(0, src);
     }
 
     let reverse = temp.storage.get_reverse_edges(0);
@@ -281,7 +281,7 @@ fn test_reverse_edge_reallocation_double() {
     }
 
     for src in 1..=total_sources {
-        temp.storage.add_reverse_edge(src, 0);
+        temp.storage.add_reverse_edge(0, src);
     }
 
     let reverse = temp.storage.get_reverse_edges(0);
@@ -312,7 +312,7 @@ fn test_remove_reverse_edge_after_reallocation() {
     }
 
     for src in 1..=total_sources {
-        temp.storage.add_reverse_edge(src, 0);
+        temp.storage.add_reverse_edge(0, src);
     }
 
     // Remove a few specific reverse edges.
@@ -430,7 +430,7 @@ fn test_multiple_nodes_reverse_reallocation() {
     let mut src = target_nodes;
     for target in 0..target_nodes {
         for _ in 0..edges_per_node {
-            temp.storage.add_reverse_edge(src, target);
+            temp.storage.add_reverse_edge(target, src);
             src += 1;
         }
     }
@@ -482,7 +482,7 @@ fn test_independent_forward_and_reverse_reallocation() {
 
     // Node 1: add many reverse edges.
     for src in 2..2 + reverse_count {
-        temp.storage.add_reverse_edge(src, 1);
+        temp.storage.add_reverse_edge(1, src);
     }
 
     // Verify forward edges on node 0.
