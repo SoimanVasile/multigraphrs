@@ -57,15 +57,12 @@ where
             return None;
         }
         
-        let struct_bytes = &self.mmap_ref.mmap_structure[
-            self.current_offset as usize .. self.current_offset as usize + size_of::<DiskEdge>()
-        ];
+        let struct_bytes = &self.mmap_ref.file_manager_edge_structure.reading_bytes(self.current_offset,self.current_offset + size_of::<DiskEdge>() as u64);
 
         let disk_edge: &DiskEdge = bytemuck::from_bytes(struct_bytes);
         self.current_offset += size_of::<DiskEdge>() as u64;
         
-        let weight_bytes: &[u8] = &self.mmap_ref.mmap_data[
-            disk_edge.weight_offset as usize.. (disk_edge.weight_offset + disk_edge.weight_len) as usize];
+        let weight_bytes: &[u8] = &self.mmap_ref.file_manager_weight_data.reading_bytes(disk_edge.weight_offset, disk_edge.weight_offset + disk_edge.weight_len);
 
         let weight: W = FromDiskBytes::from_bytes(weight_bytes);
 
@@ -127,9 +124,7 @@ where
             return None;
         }
         
-        let struct_bytes = &self.mmap_ref.mmap_reverse_structure[
-            self.current_offset as usize .. self.current_offset as usize + size_of::<u64>()
-        ];
+        let struct_bytes = self.mmap_ref.file_manager_reverse_edge.reading_bytes(self.current_offset, self.current_offset + size_of::<u64>() as u64);
 
         let node: u64 = u64::from_le_bytes(struct_bytes.try_into().unwrap());
         self.current_offset += size_of::<u64>() as u64;

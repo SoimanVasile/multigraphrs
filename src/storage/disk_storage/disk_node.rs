@@ -1,6 +1,8 @@
 use bytemuck::Pod;
 use bytemuck::Zeroable;
 
+const DISK_NODE_INITIAL_CAPACITY: u64= 1024;
+
 /// On-disk representation of a graph node.
 ///
 /// Stores the node's index, pointers to its forward and reverse edge blocks,
@@ -19,6 +21,10 @@ pub struct DiskNode{
     pub list_reverse_edges_offset: u64,
     /// Number of reverse edge entries stored.
     pub number_of_reverse_edges: u64,
+    /// The allocated capacity (in bytes) for the forward edge block in `structure.bin`.
+    pub capacity: u64,
+    /// The allocated capacity (in bytes) for the reverse edge block in `reverse_structure.bin`.
+    pub reverse_capacity: u64,
 }
 
 impl DiskNode{
@@ -30,7 +36,7 @@ impl DiskNode{
     /// # Panics
     /// This method does not panic.
     pub fn new(node_idx: u64, list_edges_offset: u64,list_reverse_edges_offset: u64) -> Self{
-        Self { node_idx, list_edges_offset, number_of_edges: 0, list_reverse_edges_offset, number_of_reverse_edges: 0,}   
+        Self { node_idx, list_edges_offset, number_of_edges: 0, list_reverse_edges_offset, number_of_reverse_edges: 0, capacity: DISK_NODE_INITIAL_CAPACITY, reverse_capacity: DISK_NODE_INITIAL_CAPACITY}   
     }
     /// Returns the byte offset of this node's forward edge block.
     ///
