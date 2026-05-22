@@ -37,6 +37,20 @@ where
         Ok(edge)
     }
 
+    /// Removes the undirected edge between `source` and `target`.
+    ///
+    /// Both the forward (`source` → `target`) and reverse (`target` → `source`)
+    /// edges are removed. Matching is by target identity only.
+    ///
+    /// # Returns
+    /// The removed forward `Edge` (**owned**) on success.
+    ///
+    /// # Errors
+    /// Returns `GraphErrors::EdgeDoesntExists` if no matching edge is found
+    /// in either direction.
+    ///
+    /// # Panics
+    /// Panics if `source` or `target` is out of bounds in the storage backend.
     fn remove_edge(graph: &mut impl StorageBackend<u32>, source: u64, target: u64, weight: &u32 ) -> Result<Edge<u32>, crate::core::graph_errors::GraphErrors> {
         let edge = Edge::new(target, weight);
         let reverse_edge = Edge::new(source, weight);

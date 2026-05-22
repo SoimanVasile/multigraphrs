@@ -184,7 +184,7 @@ fn test_add_reverse_edge() {
 
     let edge = Edge::new(1, &42);
     temp.storage.add_edge_to_node(0, &edge);
-    temp.storage.add_reverse_edge(0, 1);
+    temp.storage.add_reverse_edge(1, 0);
 
     let reverse = temp.storage.get_reverse_edges(1);
     assert_eq!(reverse.len(), 1, "Should have 1 reverse edge");
@@ -197,18 +197,24 @@ fn test_get_reverse_edges() {
     temp.storage.add_node(); // node 0
     temp.storage.add_node(); // node 1
     temp.storage.add_node(); // node 2
+    temp.storage.add_node(); // node 3
 
     let edge1 = Edge::new(2, &42);
     let edge2 = Edge::new(2, &100);
+    let edge3 = Edge::new(2, &100);
     temp.storage.add_edge_to_node(0, &edge1);
     temp.storage.add_edge_to_node(1, &edge2);
+    temp.storage.add_edge_to_node(3, &edge3);
 
-    temp.storage.add_reverse_edge(0, 2);
-    temp.storage.add_reverse_edge(1, 2);
+    temp.storage.add_reverse_edge(2, 0);
+    temp.storage.add_reverse_edge(2, 1);
+    temp.storage.add_reverse_edge(2, 3);
 
     let reverse = temp.storage.get_reverse_edges(2);
-    assert_eq!(reverse.len(), 2, "Node 2 should have 2 reverse edges");
+    println!("{:?}", reverse);
+    assert_eq!(reverse.len(), 3, "Node 2 should have 2 reverse edges");
     assert!(reverse.contains(&0), "Reverse edges should contain node 0");
+    assert!(reverse.contains(&3), "Reverse edges should contain node 3");
     assert!(reverse.contains(&1), "Reverse edges should contain node 1");
 }
 
@@ -221,5 +227,284 @@ fn test_decrement_node_counter() {
 
     temp.storage.decrement_node_counter();
     assert_eq!(temp.storage.node_count(), 1, "Node count should decrement");
+}
+
+// ── Capacity overflow / reallocation tests ──────────────────────────────
+
+/// reverse_capacity starts at 1024 bytes.  Each reverse edge is a u64 (8 bytes),
+/// so the block can hold 1024 / 8 = 128 entries before it must reallocate.
+/// This test adds exactly 129 reverse edges and verifies all survive.
+#[test]
+fn test_reverse_edge_reallocation_single() {
+    let mut temp = TempDiskStorage::new("rev_realloc_single");
+
+    // Node 0 is the target that will receive many incoming reverse edges.
+    // Nodes 1..=129 are the sources.
+    let total_sources = 129u64;
+    for _ in 0..=total_sources {
+        temp.storage.add_node();
+    }
+
+    // Add 129 reverse edges to node 0 — this forces exactly one reallocation.
+    for src in 1..=total_sources {
+        temp.storage.add_reverse_edge(0, src);
+    }
+
+    let reverse = temp.storage.get_reverse_edges(0);
+    assert_eq!(
+        reverse.len(),
+        total_sources as usize,
+        "All {} reverse edges must be present after reallocation",
+        total_sources
+    );
+
+    // Verify every source ID is present.
+    for src in 1..=total_sources {
+        assert!(
+            reverse.contains(&src),
+            "Reverse edge from source {} should survive reallocation",
+            src
+        );
+    }
+}
+
+/// Forces two consecutive reallocations on reverse edges.
+/// After first realloc: capacity = 2048 → holds 256 entries.
+/// Pushing to 257 entries triggers the second realloc (capacity = 4096).
+#[test]
+fn test_reverse_edge_reallocation_double() {
+    let mut temp = TempDiskStorage::new("rev_realloc_double");
+
+    let total_sources = 257u64;
+    for _ in 0..=total_sources {
+        temp.storage.add_node();
+    }
+
+    for src in 1..=total_sources {
+        temp.storage.add_reverse_edge(0, src);
+    }
+
+    let reverse = temp.storage.get_reverse_edges(0);
+    assert_eq!(
+        reverse.len(),
+        total_sources as usize,
+        "All {} reverse edges must be present after two reallocations",
+        total_sources
+    );
+
+    for src in 1..=total_sources {
+        assert!(
+            reverse.contains(&src),
+            "Reverse edge from source {} should survive double reallocation",
+            src
+        );
+    }
+}
+
+/// After reallocation, swap-remove must still work correctly on the new block.
+#[test]
+fn test_remove_reverse_edge_after_reallocation() {
+    let mut temp = TempDiskStorage::new("rev_remove_after_realloc");
+
+    let total_sources = 130u64; // triggers realloc at 129
+    for _ in 0..=total_sources {
+        temp.storage.add_node();
+    }
+
+    for src in 1..=total_sources {
+        temp.storage.add_reverse_edge(0, src);
+    }
+
+    // Remove a few specific reverse edges.
+    temp.storage.remove_reverse_edge(0, 1);   // remove first added
+    temp.storage.remove_reverse_edge(0, 65);  // remove one in the middle
+    temp.storage.remove_reverse_edge(0, 130); // remove last added
+
+    let reverse = temp.storage.get_reverse_edges(0);
+    assert_eq!(
+        reverse.len(),
+        (total_sources - 3) as usize,
+        "Count should reflect 3 removals"
+    );
+    assert!(!reverse.contains(&1),   "Source 1 should be removed");
+    assert!(!reverse.contains(&65),  "Source 65 should be removed");
+    assert!(!reverse.contains(&130), "Source 130 should be removed");
+
+    // A surviving edge should still be readable.
+    assert!(reverse.contains(&2),   "Source 2 should still exist");
+    assert!(reverse.contains(&100), "Source 100 should still exist");
+}
+
+/// capacity starts at 1024 bytes. Each DiskEdge is 24 bytes (3 × u64),
+/// so the block holds floor(1024 / 24) = 42 edges before the 43rd triggers reallocation.
+#[test]
+fn test_forward_edge_reallocation() {
+    let mut temp = TempDiskStorage::new("fwd_realloc");
+
+    // Node 0 = source, nodes 1..=50 = targets.
+    let total_targets = 50u64;
+    for _ in 0..=total_targets {
+        temp.storage.add_node();
+    }
+
+    for target in 1..=total_targets {
+        let edge = Edge::new(target, &(target as u32));
+        temp.storage.add_edge_to_node(0, &edge);
+    }
+
+    // Verify counts.
+    assert_eq!(
+        temp.storage.node_len(0),
+        total_targets as usize,
+        "Node 0 should report {} edges after reallocation",
+        total_targets
+    );
+    assert_eq!(
+        temp.storage.edge_count(),
+        total_targets as usize,
+        "Global edge count should match"
+    );
+
+    // Verify each edge is readable with correct weight.
+    let edges: Vec<_> = temp.storage.get_edges(0).collect();
+    assert_eq!(edges.len(), total_targets as usize);
+
+    for target in 1..=total_targets {
+        assert!(
+            edges.iter().any(|e| e.get_target() == target && e.get_weight() == target as u32),
+            "Edge to target {} with weight {} should exist after reallocation",
+            target,
+            target
+        );
+    }
+}
+
+/// After forward-edge reallocation, swap-remove must still work on the new block.
+#[test]
+fn test_remove_forward_edge_after_reallocation() {
+    let mut temp = TempDiskStorage::new("fwd_remove_after_realloc");
+
+    let total_targets = 50u64;
+    for _ in 0..=total_targets {
+        temp.storage.add_node();
+    }
+
+    for target in 1..=total_targets {
+        let edge = Edge::new(target, &(target as u32));
+        temp.storage.add_edge_to_node(0, &edge);
+    }
+
+    // Remove a few edges by target.
+    temp.storage.remove_edge_by_target(0, 1);
+    temp.storage.remove_edge_by_target(0, 25);
+    temp.storage.remove_edge_by_target(0, 50);
+
+    assert_eq!(
+        temp.storage.node_len(0),
+        (total_targets - 3) as usize,
+        "Edge count should reflect 3 removals"
+    );
+
+    assert!(temp.storage.contains_edge(0, 1).is_err(),  "Edge to 1 should be removed");
+    assert!(temp.storage.contains_edge(0, 25).is_err(), "Edge to 25 should be removed");
+    assert!(temp.storage.contains_edge(0, 50).is_err(), "Edge to 50 should be removed");
+    assert!(temp.storage.contains_edge(0, 2).is_ok(),   "Edge to 2 should still exist");
+    assert!(temp.storage.contains_edge(0, 30).is_ok(),  "Edge to 30 should still exist");
+}
+
+/// Multiple nodes each independently fill and reallocate their reverse edge blocks,
+/// ensuring the free-block pointer stays consistent and blocks don't overlap.
+#[test]
+fn test_multiple_nodes_reverse_reallocation() {
+    let mut temp = TempDiskStorage::new("multi_node_rev_realloc");
+
+    // Nodes 0, 1, 2 each receive 129 reverse edges (each triggers one realloc).
+    // Source nodes are 3..=3+129*3-1.
+    let edges_per_node = 129u64;
+    let target_nodes = 3u64;
+    let total_nodes = target_nodes + edges_per_node * target_nodes;
+    for _ in 0..total_nodes {
+        temp.storage.add_node();
+    }
+
+    let mut src = target_nodes;
+    for target in 0..target_nodes {
+        for _ in 0..edges_per_node {
+            temp.storage.add_reverse_edge(target, src);
+            src += 1;
+        }
+    }
+
+    // Verify each target node's reverse edges are intact and non-overlapping.
+    for target in 0..target_nodes {
+        let reverse = temp.storage.get_reverse_edges(target);
+        assert_eq!(
+            reverse.len(),
+            edges_per_node as usize,
+            "Node {} should have {} reverse edges",
+            target,
+            edges_per_node
+        );
+        // Verify no duplicates.
+        let mut sorted = reverse.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            edges_per_node as usize,
+            "Node {} should have no duplicate reverse edges",
+            target
+        );
+    }
+}
+
+/// Verifies that forward and reverse edge blocks are independently managed.
+/// One node gets many forward edges (triggers forward realloc) while another
+/// gets many reverse edges (triggers reverse realloc). Neither should corrupt the other.
+#[test]
+fn test_independent_forward_and_reverse_reallocation() {
+    let mut temp = TempDiskStorage::new("independent_realloc");
+
+    // We need: node 0 (forward source), node 1 (reverse target),
+    // plus enough nodes to serve as forward targets and reverse sources.
+    let forward_count = 50u64;  // triggers forward realloc at 43
+    let reverse_count = 130u64; // triggers reverse realloc at 129
+    let total = 2 + forward_count.max(reverse_count);
+    for _ in 0..total {
+        temp.storage.add_node();
+    }
+
+    // Node 0: add many forward edges.
+    for target in 2..2 + forward_count {
+        let edge = Edge::new(target, &(target as u32));
+        temp.storage.add_edge_to_node(0, &edge);
+    }
+
+    // Node 1: add many reverse edges.
+    for src in 2..2 + reverse_count {
+        temp.storage.add_reverse_edge(1, src);
+    }
+
+    // Verify forward edges on node 0.
+    let fwd_edges: Vec<_> = temp.storage.get_edges(0).collect();
+    assert_eq!(fwd_edges.len(), forward_count as usize);
+    for target in 2..2 + forward_count {
+        assert!(
+            fwd_edges.iter().any(|e| e.get_target() == target),
+            "Forward edge to {} should exist",
+            target
+        );
+    }
+
+    // Verify reverse edges on node 1.
+    let rev_edges = temp.storage.get_reverse_edges(1);
+    assert_eq!(rev_edges.len(), reverse_count as usize);
+    for src in 2..2 + reverse_count {
+        assert!(
+            rev_edges.contains(&src),
+            "Reverse edge from {} should exist",
+            src
+        );
+    }
 }
 

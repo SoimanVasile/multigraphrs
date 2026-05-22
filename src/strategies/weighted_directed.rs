@@ -37,6 +37,19 @@ where
         Ok(edge)
     }
 
+    /// Removes a single directed, weighted edge from `source` to `target`
+    /// matching both target identity **and** weight equality.
+    ///
+    /// Also updates the reverse adjacency index.
+    ///
+    /// # Returns
+    /// The removed `Edge` (**owned**) on success.
+    ///
+    /// # Errors
+    /// Returns `GraphErrors::EdgeDoesntExists` if no matching edge is found.
+    ///
+    /// # Panics
+    /// Panics if `source` is out of bounds in the storage backend.
     fn remove_edge(graph: &mut impl StorageBackend<W>, source: u64, target: u64, weight: &W ) -> Result<Edge<W>, GraphErrors> {
         let edge = Edge::new(target, weight);
         let result = graph.remove_edge(source, &edge, |edge_1: &Edge<W>, edge_2: &Edge<W>| -> bool {

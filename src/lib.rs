@@ -75,6 +75,16 @@ where
     S: DirectionStrategy<W>,
     B: StorageBackend<W>,
 {
+    /// Creates a new `MultiGraph` using the given storage backend.
+    ///
+    /// This is the universal constructor shared by all graph variants.
+    /// Strategy-specific `new()` helpers call this with a default backend.
+    ///
+    /// # Returns
+    /// An empty graph that **takes ownership** of `backend`.
+    ///
+    /// # Panics
+    /// This method does not panic.
     pub fn with_backend(backend: B) -> Self {
         MultiGraph {
             adjacency_list: backend,
@@ -118,6 +128,24 @@ where
 
     }
 
+    /// Removes a node and all edges connected to it from the graph.
+    ///
+    /// The strategy `S` determines how incoming and outgoing edges are cleaned
+    /// up (e.g. directed strategies use the reverse adjacency list, undirected
+    /// strategies walk the outgoing neighbours).
+    ///
+    /// The freed internal ID is recycled and may be reused by future
+    /// [`add_node`](Self::add_node) calls.
+    ///
+    /// # Returns
+    /// An **owned clone** of the removed node key on success.
+    ///
+    /// # Errors
+    /// Returns `GraphErrors::NodeNotFound` if `source` is not present in the graph.
+    ///
+    /// # Panics
+    /// Panics (via `unwrap`) if the internal reverse-lookup vector is out of
+    /// sync with the hash map — this indicates a bug in the library itself.
     pub fn remove_node(&mut self, source: &K) -> Result<K, GraphErrors> {
         let index = match self.hashed_nodes.remove(source) {
             Some(idx) => idx,
@@ -132,12 +160,35 @@ where
         Ok(removed_node)
     }
 
+    /// Returns the degree (number of outgoing edges) of the given node.
+    ///
+    /// # Returns
+    /// A **copy** of the edge count (`usize` is `Copy`).
+    ///
+    /// # Errors
+    /// Returns `GraphErrors::NodeNotFound` if the node is not in the graph.
+    ///
+    /// # Panics
+    /// This method does not panic.
     pub fn degree(&self, source: &K) -> Result<usize, GraphErrors>{
         match self.hashed_nodes.get(source){
             Some(n) => return Ok(self.adjacency_list.node_len(*n)),
             None => return Err(GraphErrors::NodeNotFound),
         }
     }
+    /// Collects all neighbours (outgoing edges) of the given node.
+    ///
+    /// # Returns
+    /// A `Vec` of **cloned** `EdgeView` structs. Each `EdgeView` contains
+    /// independent copies of the target key and weight; mutating them will
+    /// **not** affect the graph.
+    ///
+    /// # Errors
+    /// Returns `GraphErrors::NodeNotFound` if the node is not in the graph.
+    ///
+    /// # Panics
+    /// Panics (via `unwrap`) if any edge targets a node whose reverse-lookup
+    /// entry is `None` — this indicates an internal inconsistency.
     pub fn get_neighbours(&self, source: &K) -> Result<Vec<EdgeView<K, W>>, GraphErrors>{
         let source_hashed = match self.hashed_nodes.get(&source){
             Some(t) => t,
@@ -149,6 +200,13 @@ where
             .collect())
     }
 
+    /// Checks whether the given node key exists in the graph.
+    ///
+    /// # Returns
+    /// A **copy** (`bool` is `Copy`). No data from the graph is moved or cloned.
+    ///
+    /// # Panics
+    /// This method does not panic.
     pub fn contains_node(&self, key: &K) -> bool{
         match self.hashed_nodes.get(&key){
             Some(_) => true,
@@ -156,18 +214,55 @@ where
         }
     }
 
+    /// Returns the total number of nodes currently in the graph.
+    ///
+    /// # Returns
+    /// A **copy** of the count (`usize` is `Copy`).
+    ///
+    /// # Panics
+    /// This method does not panic.
     pub fn node_count(&self) -> usize{
         self.adjacency_list.node_count()
     }
 
+    /// Returns the total number of edges currently in the graph.
+    ///
+    /// For undirected graphs each logical connection counts as **two** internal
+    /// edges (one per direction).
+    ///
+    /// # Returns
+    /// A **copy** of the count (`usize` is `Copy`).
+    ///
+    /// # Panics
+    /// This method does not panic.
     pub fn edge_count(&self) -> usize{
         self.adjacency_list.edge_count()
     }
 
+    /// Returns an iterator over all nodes in the graph and their edges.
+    ///
+    /// Each item yielded is a tuple of:
+    /// * An **immutable reference** (`&K`) to the node key (borrows from `self`).
+    /// * A `Vec<EdgeView<K, W>>` of **cloned** edge views for that node.
+    ///
+    /// Removed ("tombstoned") node slots are automatically skipped.
+    ///
+    /// # Panics
+    /// Panics (via `unwrap`) if the reverse-lookup vector is inconsistent — this
+    /// indicates an internal bug.
     pub fn iter(&self) -> multigraph_iterator::NodeIter<'_, K, W, S, B> {
         multigraph_iterator::NodeIter { graph: self, index: 0 }
     }
 
+    /// Checks whether an edge from `source` to `target` exists.
+    ///
+    /// Returns `false` if either node does not exist (rather than erroring).
+    ///
+    /// # Returns
+    /// A **copy** (`bool` is `Copy`).
+    ///
+    /// # Panics
+    /// This method does not panic.
     pub fn contains_edge(&self, source: &K, target: &K) -> bool{
 
         let source_hashed = match self.hashed_nodes.get(&source){
@@ -227,6 +322,20 @@ where
 
     }
 
+    /// Removes a weighted, undirected edge matching the given `source`, `target`, and `weight`.
+    ///
+    /// Both directions of the edge are removed. The match is performed on
+    /// both target identity **and** weight equality.
+    ///
+    /// # Returns
+    /// A **cloned** `EdgeView` of the removed edge on success.
+    ///
+    /// # Errors
+    /// * `GraphErrors::NodeNotFound` — if either node does not exist.
+    /// * `GraphErrors::EdgeDoesntExists` — if no matching edge is found.
+    ///
+    /// # Panics
+    /// Panics (via `unwrap`) if the reverse-lookup entry for the edge target is `None`.
     pub fn remove_edge(&mut self, source: K, target: K, weight: W) -> Result<EdgeView<K, W>, GraphErrors>{
         let source_hashed = match self.hashed_nodes.get(&source){
             Some(t) => t,
@@ -281,6 +390,20 @@ where
         Ok(EdgeView::new(self.reversed_hashed_nodes[edge.get_target() as usize].as_ref().unwrap(), &edge.get_weight()))
     }
 
+    /// Removes a weighted, directed edge matching the given `source`, `target`, and `weight`.
+    ///
+    /// Only the single forward edge is removed. The match is performed on
+    /// both target identity **and** weight equality.
+    ///
+    /// # Returns
+    /// A **cloned** `EdgeView` of the removed edge on success.
+    ///
+    /// # Errors
+    /// * `GraphErrors::NodeNotFound` — if either node does not exist.
+    /// * `GraphErrors::EdgeDoesntExists` — if no matching edge is found.
+    ///
+    /// # Panics
+    /// Panics (via `unwrap`) if the reverse-lookup entry for the edge target is `None`.
     pub fn remove_edge(&mut self, source: K, target: K, weight: W) -> Result<EdgeView<K, W>, GraphErrors>{
         let source_hashed = match self.hashed_nodes.get(&source){
             Some(t) => t,
@@ -333,6 +456,19 @@ where
         Ok(EdgeView::new(self.reversed_hashed_nodes[edge.get_target() as usize].as_ref().unwrap(), &edge.get_weight()))
     }
 
+    /// Removes an unweighted, directed edge from `source` to `target`.
+    ///
+    /// Matching is performed on target identity only (weight is always `1`).
+    ///
+    /// # Returns
+    /// A **cloned** `EdgeView` of the removed edge on success.
+    ///
+    /// # Errors
+    /// * `GraphErrors::NodeNotFound` — if either node does not exist.
+    /// * `GraphErrors::EdgeDoesntExists` — if no matching edge is found.
+    ///
+    /// # Panics
+    /// Panics (via `unwrap`) if the reverse-lookup entry for the edge target is `None`.
     pub fn remove_edge(&mut self, source: K, target: K) -> Result<EdgeView<K, u32>, GraphErrors>{
         let source_hashed = match self.hashed_nodes.get(&source){
             Some(t) => t,
@@ -385,6 +521,19 @@ where
         Ok(EdgeView::new(self.reversed_hashed_nodes[edge.get_target() as usize].as_ref().unwrap(), &edge.get_weight()))
     }
 
+    /// Removes an unweighted, undirected edge between `source` and `target`.
+    ///
+    /// Both directions of the edge are removed.
+    ///
+    /// # Returns
+    /// A **cloned** `EdgeView` of the removed edge on success.
+    ///
+    /// # Errors
+    /// * `GraphErrors::NodeNotFound` — if either node does not exist.
+    /// * `GraphErrors::EdgeDoesntExists` — if no matching edge is found.
+    ///
+    /// # Panics
+    /// Panics (via `unwrap`) if the reverse-lookup entry for the edge target is `None`.
     pub fn remove_edge(&mut self, source: K, target: K) -> Result<EdgeView<K, u32>, GraphErrors>{
         let source_hashed = match self.hashed_nodes.get(&source){
             Some(t) => t,

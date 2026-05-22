@@ -1,7 +1,21 @@
+/// Trait for deserializing a type from a raw byte slice read from disk.
+///
+/// Implementors convert a `&[u8]` into an **owned** value of `Self`.
 pub trait FromDiskBytes {
+    /// Constructs an **owned** instance from the given byte slice.
+    ///
+    /// # Panics
+    /// May panic if the byte slice length does not match the expected size
+    /// for the target type.
     fn from_bytes(bytes: &[u8]) -> Self;
 }
 
+/// `FromDiskBytes` implementation for `String`.
+///
+/// Interprets the byte slice as UTF-8 and returns an **owned** `String`.
+///
+/// # Panics
+/// Panics (via `unwrap`) if the bytes are not valid UTF-8.
 impl FromDiskBytes for String{
     fn from_bytes(bytes: &[u8]) -> Self {
         std::str::from_utf8(bytes).unwrap().to_string()
