@@ -1,14 +1,10 @@
-use std::io::Write;
 use std::marker::PhantomData;
 use std::path::Path;
-use memmap2::MmapOptions;
-use std::fs::OpenOptions;
 
 use crate::GraphErrors;
 use crate::storage::disk_storage::disk_edge_iterator::DiskEdgeIterator;
 use crate::storage::disk_storage::disk_edge_iterator::DiskReverseEdgeIterator;
 use crate::storage::disk_storage::from_disk_bytes::FromDiskBytes;
-use crate::storage::disk_storage::super_block;
 use crate::storage::disk_storage::super_block::SuperBlock;
 use crate::storage::disk_storage::disk_edge::DiskEdge;
 use crate::storage::disk_storage::disk_node::DiskNode;
@@ -18,6 +14,38 @@ use crate::storage::disk_storage::file_manager::FileManager;
 
 const SUPER_BLOCK_SIZE: usize = 1024;
 
+fn resizing_disk_node(file_manager: &mut FileManager, super_block: &mut SuperBlock, disk_node: &mut DiskNode) -> Result<(), std::io::Error>{
+    disk_node.capacity *= 2;
+    let free_offset = super_block.get_free_block_structure();
+    super_block.find_next_strcture_free_block(&disk_node.capacity);
+
+    while free_offset + disk_node.capacity > file_manager.file_len()?{
+        file_manager.increase_file_size()?;
+    }
+    let edge_offset= disk_node.list_edges_offset;
+    let edge_offset_end = edge_offset + (disk_node.number_of_edges * size_of::<DiskEdge>() as u64);
+
+    file_manager.copy_within(edge_offset, edge_offset_end, free_offset);
+    disk_node.list_edges_offset = free_offset;
+
+    Ok(())
+}
+
+pub fn resizing_disk_node_reverse(file_manager: &mut FileManager, super_block: &mut SuperBlock, disk_node: &mut DiskNode) -> Result<(), std::io::Error>{
+    let old_offset = disk_node.list_reverse_edges_offset;
+    disk_node.reverse_capacity *= 2;
+    let free_offset = super_block.get_free_block_reverse_structure();
+    super_block.find_next_reverse_structure_free_block(&disk_node.reverse_capacity);
+
+    while free_offset + disk_node.reverse_capacity > file_manager.file_len().unwrap() {
+        file_manager.increase_file_size().unwrap();
+    }
+
+    let src_end = old_offset + (disk_node.number_of_reverse_edges * size_of::<u64>() as u64);
+    file_manager.copy_within(old_offset, src_end, free_offset);
+    disk_node.list_reverse_edges_offset = free_offset;
+    Ok(())
+}
 
 #[derive(Debug)]
 pub struct DiskStorage<W>
@@ -146,8 +174,8 @@ where
     pub fn write_disk_node(&mut self, disk_node: &DiskNode) -> Result<(), std::io::Error>{
         let offset = self.calculate_node_offset(&disk_node.node_idx);
         let bytes = disk_node.convert_to_bytes();
-        
-        if offset + bytes.len() as u64 > self.file_manager_node.file_len()?{
+
+        while offset + bytes.len() as u64 > self.file_manager_node.file_len()?{
             self.file_manager_node.increase_file_size()?;
         }
         self.file_manager_node.writing_bytes_to_mmap(offset, offset + bytes.len() as u64, bytes);
@@ -204,19 +232,8 @@ where
 
         // Checks if we add this edge, it will overflow the already allocated memory and allocates
         // more if its full
-        if  (disk_node.number_of_edges + 1) * size_of::<DiskEdge>() as u64 > disk_node.capacity{
-            disk_node.capacity *= 2;
-            let free_offset = super_block.get_free_block_structure();
-            super_block.find_next_strcture_free_block(&disk_node.capacity);
-
-            if free_offset + disk_node.capacity > self.file_manager_edge_structure.file_len()?{
-                self.file_manager_edge_structure.increase_file_size()?;
-            }
-            let edge_offset= disk_node.list_edges_offset;
-            let edge_offset_end = edge_offset + (disk_node.number_of_edges * size_of::<DiskEdge>() as u64);
-
-            self.file_manager_edge_structure.copy_within(edge_offset, edge_offset_end, free_offset);
-            disk_node.list_edges_offset = free_offset;
+        if  !disk_node.verify_enough_capacity(){
+            resizing_disk_node(&mut self.file_manager_edge_structure, super_block, disk_node)?;
         }
 
         let index = disk_node.number_of_edges;
@@ -239,7 +256,7 @@ where
     /// Panics if the write region exceeds the data memory map bounds.
     pub fn write_weight(&mut self, weight_data_bytes: &[u8], weight_offset: &u64) -> Result<(), std::io::Error>{
 
-        if weight_offset + weight_data_bytes.len() as u64 > self.file_manager_weight_data.file_len()?{
+        while weight_offset + weight_data_bytes.len() as u64 > self.file_manager_weight_data.file_len()?{
             self.file_manager_weight_data.increase_file_size()?;
         }
 
@@ -352,7 +369,7 @@ where
             disk_node.list_edges_offset = superblock.get_free_block_structure();
             superblock.find_next_strcture_free_block(&disk_node.capacity);
 
-            if disk_node.list_edges_offset + disk_node.capacity > self.file_manager_edge_structure.file_len().unwrap(){
+            while disk_node.list_edges_offset + disk_node.capacity > self.file_manager_edge_structure.file_len().unwrap(){
                 self.file_manager_edge_structure.increase_file_size();
             }
             self.file_manager_edge_structure.zeroing_mmap(disk_node.list_edges_offset, disk_node.list_edges_offset + disk_node.capacity);
@@ -442,7 +459,8 @@ where
         for edge_number in 0..disk_node.get_number_of_edges(){
             let edge_offset = self.calculate_edge_offset(&disk_node.get_edge_offset(), &(edge_number as u64));
 
-            let struct_bytes = self.file_manager_edge_structure.reading_bytes(edge_offset, edge_offset + std::mem::size_of::<DiskEdge>() as u64);
+            let struct_bytes = self.file_manager_edge_structure
+                .reading_bytes(edge_offset, edge_offset + std::mem::size_of::<DiskEdge>() as u64);
             let disk_edge: &DiskEdge = bytemuck::from_bytes(struct_bytes);
 
             if disk_edge.node == target{
@@ -462,7 +480,7 @@ where
             disk_node.list_reverse_edges_offset = superblock.get_free_block_reverse_structure();
             superblock.find_next_reverse_structure_free_block(&disk_node.reverse_capacity);
 
-            if disk_node.list_reverse_edges_offset + disk_node.reverse_capacity > self.file_manager_reverse_edge.file_len().unwrap() {
+            while disk_node.list_reverse_edges_offset + disk_node.reverse_capacity > self.file_manager_reverse_edge.file_len().unwrap() {
                 self.file_manager_reverse_edge.increase_file_size().unwrap();
             }
             self.file_manager_reverse_edge.zeroing_mmap(
@@ -472,19 +490,8 @@ where
         }
 
         // Check if adding this reverse edge would overflow the allocated capacity
-        if (disk_node.number_of_reverse_edges + 1) * size_of::<u64>() as u64 > disk_node.reverse_capacity {
-            let old_offset = disk_node.list_reverse_edges_offset;
-            disk_node.reverse_capacity *= 2;
-            let free_offset = superblock.get_free_block_reverse_structure();
-            superblock.find_next_reverse_structure_free_block(&disk_node.reverse_capacity);
-
-            if free_offset + disk_node.reverse_capacity > self.file_manager_reverse_edge.file_len().unwrap() {
-                self.file_manager_reverse_edge.increase_file_size().unwrap();
-            }
-
-            let src_end = old_offset + (disk_node.number_of_reverse_edges * size_of::<u64>() as u64);
-            self.file_manager_reverse_edge.copy_within(old_offset, src_end, free_offset);
-            disk_node.list_reverse_edges_offset = free_offset;
+        if !disk_node.verify_enough_reverse_capacity(){
+            resizing_disk_node_reverse(&mut self.file_manager_reverse_edge, &mut superblock, &mut disk_node);
         }
 
         let edge_offset = disk_node.list_reverse_edges_offset + disk_node.number_of_reverse_edges * size_of::<u64>() as u64;

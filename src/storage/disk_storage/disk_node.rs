@@ -1,7 +1,8 @@
 use bytemuck::Pod;
 use bytemuck::Zeroable;
+use crate::storage::disk_storage::disk_edge::DiskEdge;
 
-const DISK_NODE_INITIAL_CAPACITY: u64= 1024;
+const DISK_NODE_INITIAL_CAPACITY: u64= 256;
 
 /// On-disk representation of a graph node.
 ///
@@ -77,6 +78,15 @@ impl DiskNode{
             std::slice::from_raw_parts(self as *const DiskNode as *const u8, std::mem::size_of::<DiskNode>())
         }
     }
+
+    pub fn verify_enough_capacity(&self) -> bool{
+        self.capacity >= (self.number_of_edges + 1) * size_of::<DiskEdge>() as u64 
+    }
+
+    pub fn verify_enough_reverse_capacity(&self) -> bool{
+        self.reverse_capacity >= (self.number_of_reverse_edges + 1) * size_of::<u64>() as u64
+    }
+
 }
 
 
