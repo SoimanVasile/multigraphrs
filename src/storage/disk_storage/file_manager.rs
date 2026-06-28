@@ -91,6 +91,8 @@ impl FileManager{
     }
 
     pub fn file_len(&self) -> Result<u64, std::io::Error>{
-        Ok(self.file.metadata()?.len())
+        // We can just return the length of the memory map, which is identical to the file's length.
+        // This avoids making a statx syscall to the OS.
+        Ok(self.mmap.len() as u64)
     }
 }
