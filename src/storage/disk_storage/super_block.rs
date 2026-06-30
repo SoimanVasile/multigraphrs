@@ -18,7 +18,7 @@ pub struct SuperBlock{
     pub version: u32,
 
     /// Total number of live nodes.
-    pub node_count: u64,
+   pub node_count: u64,
     /// Total number of edges across all nodes.
     pub edge_count: u64,
 
@@ -28,8 +28,15 @@ pub struct SuperBlock{
     pub next_data_free_block: u64,
     /// Next free byte offset in `reverse_structure.bin`.
     pub next_reverse_structure_free_block: u64,
+    pub head_linked_list_node: u64,
 
-    pub _padding: [u8; 976],
+    pub _padding: [u8; 968],
+}
+
+impl Default for SuperBlock{
+    fn default() -> Self{
+        Self::new()
+    }
 }
 
 unsafe impl Pod for SuperBlock{}
@@ -55,7 +62,9 @@ impl SuperBlock {
             next_data_free_block: 0,
             next_reverse_structure_free_block: 0,
 
-            _padding: [0; 976],
+            head_linked_list_node: u64::MAX,
+
+            _padding: [0; 968],
 
         }
     }
@@ -161,4 +170,13 @@ impl SuperBlock {
     pub fn find_next_reverse_structure_free_block(&mut self, size: &u64){
         self.next_reverse_structure_free_block += *size;
     }
+
+    pub fn next_free_node(&self) -> u64{
+        self.head_linked_list_node
+    }
+
+    pub fn change_header(&mut self, next_id: &u64){
+        self.head_linked_list_node = *next_id;
+    }
+        
 }

@@ -2,6 +2,7 @@ use std::{fs::OpenOptions, path::PathBuf};
 use memmap2::MmapMut;
 use memmap2::MmapOptions;
 
+
 const FILE_INITIAL_SIZE: u64 = 1024 * 1024 * 64;
 
 const FOUR_GB: u64 = 1024 * 1024 * 1024 * 4;
@@ -19,6 +20,7 @@ impl FileManager{
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .open(file_path)?;
 
         if file.metadata().map(|m| m.len()).unwrap_or(0) == 0{
@@ -69,6 +71,16 @@ impl FileManager{
     pub fn reading_bytes(&self, start: u64, end: u64) -> &[u8]{
         &self.mmap[start as usize .. end as usize]
     }
+
+    pub fn reading_bytes_mut(&mut self, start: u64, end: u64) -> &mut [u8] {
+        &mut self.mmap[start as usize .. end as usize]
+    }
+
+    pub fn mmap_ptr_mut(&mut self) -> *mut u8 {
+        self.mmap.as_mut_ptr()
+    }
+
+
 
     pub fn copy_within(&mut self, src_start: u64, src_end: u64, dest_start: u64){
         self.mmap.copy_within(src_start as usize .. src_end as usize, dest_start as usize);

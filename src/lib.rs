@@ -35,7 +35,8 @@ pub use storage::disk_storage::disk_multigraph::DiskStorage;
 use storage::adjacency_list::RamStorage;
 use storage::storage_backend::StorageBackend;
 
-use std::{collections::HashMap, hash::Hash, marker::PhantomData};
+use std::{hash::Hash, marker::PhantomData};
+use ahash::AHashMap;
 
 /// The core graph structure representing a mathematical graph.
 ///
@@ -53,14 +54,12 @@ where
     K: Eq + Hash + Clone,
     W: Clone + std::cmp::PartialEq,
 {
-    hashed_nodes: HashMap<K, u64>,
+    hashed_nodes: AHashMap<K, u64>,
     pub(crate) reversed_hashed_nodes: Vec<Option<K>>,
     /// The internal adjacency list mapping a node to its outgoing edges.
     pub(crate) adjacency_list: B,
     /// Marker to keep track of the specific strategy `S` and weight `W`.
     _marker: PhantomData<(S, W)>,
-    pub(crate) next_id: u64,
-    pub(crate) removed_ids: Vec<u64>,
 }
 
 pub type RamMultiGraph<K, W, Dir> = MultiGraph<K, W, Dir, RamStorage<W>>;
@@ -89,10 +88,17 @@ where
         MultiGraph {
             adjacency_list: backend,
             _marker: PhantomData,
-            hashed_nodes: HashMap::new(),
+            hashed_nodes: AHashMap::new(),
             reversed_hashed_nodes: Vec::new(),
-            next_id: 0,
-            removed_ids: Vec::new(),
+        }
+    }
+
+    pub fn with_capacity(number_of_preallocated_nodes: usize, backend: B) ->Self{
+        Self{
+            adjacency_list: backend,
+            _marker: PhantomData,
+            hashed_nodes: AHashMap::with_capacity(number_of_preallocated_nodes),
+            reversed_hashed_nodes: Vec::with_capacity(number_of_preallocated_nodes),
         }
     }
     /// Adds a single, disconnected node to the graph.
@@ -106,24 +112,13 @@ where
         if self.hashed_nodes.contains_key(&source) {
             return Err(GraphErrors::NodeAlreadyExists);
         }
-        let node_id;
-        if self.removed_ids.is_empty() == true{
-            node_id=self.next_id;
-            self.adjacency_list.add_node();
-            self.next_id+=1;
-        }
-        else{
-            node_id = self.removed_ids.pop().unwrap();
-            self.adjacency_list.increment_node_counter();
-        }
+        let node_id = self.adjacency_list.add_node();
         
         self.hashed_nodes.insert(source.clone(), node_id);
-        if node_id >= self.reversed_hashed_nodes.len() as u64{
-            self.reversed_hashed_nodes.push(Some(source.clone()));
+        if node_id >= self.reversed_hashed_nodes.len() as u64 {
+            self.reversed_hashed_nodes.resize(node_id as usize + 1, None);
         }
-        else{
-            self.reversed_hashed_nodes[node_id as usize] = Some(source.clone());
-        }
+        self.reversed_hashed_nodes[node_id as usize] = Some(source.clone());
         Ok(source)
 
     }
@@ -152,8 +147,6 @@ where
             None => return Err(GraphErrors::NodeNotFound),
         };
 
-        self.removed_ids.push(index);
-        
         let removed_node = self.reversed_hashed_nodes[index as usize].take().unwrap();
         S::remove_node(&mut self.adjacency_list, index);
         
@@ -172,8 +165,8 @@ where
     /// This method does not panic.
     pub fn degree(&self, source: &K) -> Result<usize, GraphErrors>{
         match self.hashed_nodes.get(source){
-            Some(n) => return Ok(self.adjacency_list.node_len(*n)),
-            None => return Err(GraphErrors::NodeNotFound),
+            Some(n) => Ok(self.adjacency_list.node_len(n)),
+            None => Err(GraphErrors::NodeNotFound),
         }
     }
     /// Collects all neighbours (outgoing edges) of the given node.
@@ -190,11 +183,11 @@ where
     /// Panics (via `unwrap`) if any edge targets a node whose reverse-lookup
     /// entry is `None` — this indicates an internal inconsistency.
     pub fn get_neighbours(&self, source: &K) -> Result<Vec<EdgeView<K, W>>, GraphErrors>{
-        let source_hashed = match self.hashed_nodes.get(&source){
+        let source_hashed = match self.hashed_nodes.get(source){
             Some(t) => t,
             None => return Err(GraphErrors::NodeNotFound),
         };
-        let neighbours = self.adjacency_list.get_edges(*source_hashed);
+        let neighbours = self.adjacency_list.get_edges(source_hashed);
         Ok(neighbours
             .map(|edge| EdgeView::new(self.reversed_hashed_nodes[edge.get_target() as usize].as_ref().unwrap(), &edge.get_weight()))
             .collect())
@@ -208,10 +201,7 @@ where
     /// # Panics
     /// This method does not panic.
     pub fn contains_node(&self, key: &K) -> bool{
-        match self.hashed_nodes.get(&key){
-            Some(_) => true,
-            None => false,
-        }
+        self.hashed_nodes.contains_key(key)
     }
 
     /// Returns the total number of nodes currently in the graph.
@@ -222,7 +212,7 @@ where
     /// # Panics
     /// This method does not panic.
     pub fn node_count(&self) -> usize{
-        self.adjacency_list.node_count()
+        self.hashed_nodes.len()
     }
 
     /// Returns the total number of edges currently in the graph.
@@ -265,20 +255,17 @@ where
     /// This method does not panic.
     pub fn contains_edge(&self, source: &K, target: &K) -> bool{
 
-        let source_hashed = match self.hashed_nodes.get(&source){
+        let source_hashed = match self.hashed_nodes.get(source){
             Some(t) => t,
             None => return false,
         };
 
-        let target_hashed = match self.hashed_nodes.get(&target){
+        let target_hashed = match self.hashed_nodes.get(target){
             Some(t) => t,
             None => return false,
         };
 
-        match self.adjacency_list.contains_edge(*source_hashed, *target_hashed) {
-            Ok(_) => true,
-            Err(_) => false,
-        }
+        self.adjacency_list.contains_edge(source_hashed, target_hashed).is_ok()
     }
 }
 

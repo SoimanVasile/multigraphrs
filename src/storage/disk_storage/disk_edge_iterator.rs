@@ -36,7 +36,7 @@ where
     /// This method does not panic. Panics may occur later during iteration
     /// if the offset is invalid.
     pub fn new(mmap_ref: &'a DiskStorage<W>, offset: &u64, number_of_edges: &u64) -> DiskEdgeIterator<'a, W>{
-        DiskEdgeIterator{mmap_ref, current_offset: offset.clone(), edges_left: number_of_edges.clone()}
+        DiskEdgeIterator{mmap_ref, current_offset: *offset, edges_left: *number_of_edges}
     }
 }
 impl<'a, W> Iterator for DiskEdgeIterator<'a, W>
@@ -62,7 +62,7 @@ where
         let disk_edge: &DiskEdge = bytemuck::from_bytes(struct_bytes);
         self.current_offset += size_of::<DiskEdge>() as u64;
         
-        let weight_bytes: &[u8] = &self.mmap_ref.file_manager_weight_data.reading_bytes(disk_edge.weight_offset, disk_edge.weight_offset + disk_edge.weight_len);
+        let weight_bytes: &[u8] = self.mmap_ref.file_manager_weight_data.reading_bytes(disk_edge.weight_offset, disk_edge.weight_offset + disk_edge.weight_len);
 
         let weight: W = FromDiskBytes::from_bytes(weight_bytes);
 
@@ -102,7 +102,7 @@ where
     /// This method does not panic. Panics may occur later during iteration
     /// if the offset is invalid.
     pub fn new(mmap_ref: &'a DiskStorage<W>, offset: &u64, number_of_edges: &u64) -> DiskReverseEdgeIterator<'a, W>{
-        DiskReverseEdgeIterator{mmap_ref, current_offset: offset.clone(), edges_left: number_of_edges.clone()}
+        DiskReverseEdgeIterator{mmap_ref, current_offset: *offset, edges_left: *number_of_edges}
     }
 }
 impl<'a, W> Iterator for DiskReverseEdgeIterator<'a, W>
