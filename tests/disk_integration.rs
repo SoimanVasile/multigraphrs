@@ -1,4 +1,4 @@
-use multigraphrs::{Directed, DiskStorage, MultiGraph, Undirected, WeightedDirected};
+use multigraphrs::{Directed, DiskStorage, MultiGraph, Undirected, Weighted, WeightedDirected};
 use std::env;
 use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -242,4 +242,207 @@ fn test_end_to_end_directed_edge_removal_and_reverse_edges() {
     for target in 151..=200 {
         assert_eq!(temp.graph.degree(&target).unwrap(), 0);
     }
+}
+
+// ── Weighted Undirected Disk Tests ──────────────────────────────────────
+
+#[test]
+fn test_end_to_end_weighted_undirected_user_workflow() {
+    let mut temp = TempGraph::<Weighted, f64>::new("weighted_undirected_workflow");
+
+    temp.graph.add_node(1).unwrap();
+    temp.graph.add_node(2).unwrap();
+    temp.graph.add_node(3).unwrap();
+
+    // Weighted undirected edge 1 <-> 2
+    temp.graph.add_edge(1, 2, 3.14).unwrap();
+    assert_eq!(temp.graph.degree(&1).unwrap(), 1);
+    assert_eq!(temp.graph.degree(&2).unwrap(), 1);
+
+    // Weighted undirected edge 1 <-> 3
+    temp.graph.add_edge(1, 3, 2.71).unwrap();
+    assert_eq!(temp.graph.degree(&1).unwrap(), 2);
+
+    // Remove specific weighted edge
+    temp.graph.remove_edge(1, 2, 3.14).unwrap();
+    assert_eq!(temp.graph.degree(&1).unwrap(), 1);
+    assert_eq!(temp.graph.degree(&2).unwrap(), 0);
+
+    // Verify remaining edge weight
+    let edges = temp.graph.get_neighbours(&1).unwrap();
+    assert_eq!(edges.len(), 1);
+    assert_eq!(*edges[0].get_weight(), 2.71);
+    assert_eq!(*edges[0].get_target(), 3);
+
+    // Force reallocation by adding many edges
+    for i in 4..=60 {
+        temp.graph.add_node(i).unwrap();
+        temp.graph.add_edge(1, i, i as f64).unwrap();
+    }
+    // degree = 1 (edge to 3) + 57 (edges to 4..=60) = 58
+    assert_eq!(temp.graph.degree(&1).unwrap(), 58);
+
+    // Remove a node and verify cleanup
+    temp.graph.remove_node(&3).unwrap();
+    assert_eq!(temp.graph.degree(&1).unwrap(), 57);
+    assert!(!temp.graph.contains_node(&3));
+}
+
+#[test]
+fn test_weighted_undirected_disk_parallel_edges() {
+    let mut temp = TempGraph::<Weighted, f64>::new("weighted_undirected_parallel");
+
+    temp.graph.add_node(1).unwrap();
+    temp.graph.add_node(2).unwrap();
+
+    // Add 3 parallel edges with different weights
+    temp.graph.add_edge(1, 2, 1.0).unwrap();
+    temp.graph.add_edge(1, 2, 2.0).unwrap();
+    temp.graph.add_edge(1, 2, 3.0).unwrap();
+
+    assert_eq!(temp.graph.degree(&1).unwrap(), 3);
+    assert_eq!(temp.graph.degree(&2).unwrap(), 3);
+
+    // Remove the edge with weight 2.0
+    temp.graph.remove_edge(1, 2, 2.0).unwrap();
+    assert_eq!(temp.graph.degree(&1).unwrap(), 2);
+    assert_eq!(temp.graph.degree(&2).unwrap(), 2);
+
+    // Verify remaining weights are 1.0 and 3.0
+    let mut edges = temp.graph.get_neighbours(&1).unwrap();
+    let mut weights: Vec<f64> = edges.iter().map(|e| *e.get_weight()).collect();
+    weights.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert_eq!(weights, vec![1.0, 3.0]);
+}
+
+// ── Disk-Backed Node ID Reuse Tests ────────────────────────────────────
+
+#[test]
+fn test_disk_directed_node_id_reuse() {
+    let mut temp = TempGraph::<Directed, u32>::new("disk_id_reuse");
+
+    temp.graph.add_node(1).unwrap();
+    temp.graph.add_node(2).unwrap();
+    temp.graph.add_node(3).unwrap();
+
+    temp.graph.add_edge(1, 2).unwrap();
+    temp.graph.add_edge(1, 3).unwrap();
+
+    // Remove node 2, freeing its slot
+    temp.graph.remove_node(&2).unwrap();
+
+    // Add node 4, should reuse the freed slot
+    temp.graph.add_node(4).unwrap();
+    assert_eq!(temp.graph.node_count(), 3);
+
+    // Edge to old node 2 should be gone, add edge to new node 4
+    temp.graph.add_edge(1, 4).unwrap();
+    assert!(temp.graph.contains_edge(&1, &4));
+    assert!(!temp.graph.contains_node(&2));
+    // degree of 1: edge to 3 (survived) + edge to 4 (new) = 2
+    assert_eq!(temp.graph.degree(&1).unwrap(), 2);
+}
+
+#[test]
+fn test_disk_directed_multiple_reuse_cycles() {
+    let mut temp = TempGraph::<Directed, u32>::new("disk_multi_reuse");
+
+    // Add 10 nodes and build a chain
+    for i in 0..10 {
+        temp.graph.add_node(i).unwrap();
+    }
+    for i in 0..9 {
+        temp.graph.add_edge(i, i + 1).unwrap();
+    }
+    assert_eq!(temp.graph.edge_count(), 9);
+
+    // Remove nodes 3, 5, 7 (breaks chain at those points)
+    temp.graph.remove_node(&3).unwrap();
+    temp.graph.remove_node(&5).unwrap();
+    temp.graph.remove_node(&7).unwrap();
+    assert_eq!(temp.graph.node_count(), 7);
+
+    // Add 3 new nodes that reuse freed slots
+    temp.graph.add_node(100).unwrap();
+    temp.graph.add_node(200).unwrap();
+    temp.graph.add_node(300).unwrap();
+    assert_eq!(temp.graph.node_count(), 10);
+
+    // Build new edges with reused nodes
+    temp.graph.add_edge(2, 100).unwrap();
+    temp.graph.add_edge(100, 4).unwrap();
+    temp.graph.add_edge(4, 200).unwrap();
+    temp.graph.add_edge(200, 6).unwrap();
+    temp.graph.add_edge(6, 300).unwrap();
+    temp.graph.add_edge(300, 8).unwrap();
+
+    // Verify new edges work
+    assert!(temp.graph.contains_edge(&2, &100));
+    assert!(temp.graph.contains_edge(&100, &4));
+    assert!(temp.graph.contains_edge(&300, &8));
+
+    // Verify old nodes are gone
+    assert!(!temp.graph.contains_node(&3));
+    assert!(!temp.graph.contains_node(&5));
+    assert!(!temp.graph.contains_node(&7));
+}
+
+#[test]
+fn test_disk_remove_all_nodes_then_rebuild() {
+    let mut temp = TempGraph::<Directed, u32>::new("disk_rebuild");
+
+    // Build initial graph
+    for i in 0..5 {
+        temp.graph.add_node(i).unwrap();
+    }
+    for i in 0..4 {
+        temp.graph.add_edge(i, i + 1).unwrap();
+    }
+
+    // Remove everything
+    for i in 0..5 {
+        temp.graph.remove_node(&i).unwrap();
+    }
+    assert_eq!(temp.graph.node_count(), 0);
+    assert_eq!(temp.graph.edge_count(), 0);
+
+    // Rebuild on recycled slots
+    for i in 100..105 {
+        temp.graph.add_node(i).unwrap();
+    }
+    for i in 100..104 {
+        temp.graph.add_edge(i, i + 1).unwrap();
+    }
+
+    assert_eq!(temp.graph.node_count(), 5);
+    assert_eq!(temp.graph.edge_count(), 4);
+    assert!(temp.graph.contains_edge(&100, &101));
+    assert!(temp.graph.contains_edge(&103, &104));
+}
+
+#[test]
+fn test_disk_undirected_node_id_reuse() {
+    let mut temp = TempGraph::<Undirected, u32>::new("disk_undirected_reuse");
+
+    temp.graph.add_node(1).unwrap();
+    temp.graph.add_node(2).unwrap();
+    temp.graph.add_node(3).unwrap();
+
+    temp.graph.add_edge(1, 2).unwrap();
+    temp.graph.add_edge(2, 3).unwrap();
+
+    // Remove node 2
+    temp.graph.remove_node(&2).unwrap();
+    assert_eq!(temp.graph.degree(&1).unwrap(), 0);
+    assert_eq!(temp.graph.degree(&3).unwrap(), 0);
+
+    // Add node 4 (reuses slot)
+    temp.graph.add_node(4).unwrap();
+    temp.graph.add_edge(1, 4).unwrap();
+
+    assert_eq!(temp.graph.degree(&1).unwrap(), 1);
+    assert_eq!(temp.graph.degree(&4).unwrap(), 1);
+    assert!(temp.graph.contains_edge(&1, &4));
+    assert!(temp.graph.contains_edge(&4, &1));
+    assert!(!temp.graph.contains_node(&2));
 }

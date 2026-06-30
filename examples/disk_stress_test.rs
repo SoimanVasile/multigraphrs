@@ -96,7 +96,7 @@ fn run_stress_test(node_count: u32, edges_per_node: u32, test_name: &str) {
 
     let backend = DiskStorage::<u32>::new(&dir);
     let mut graph: MultiGraph<u32, u32, Directed, DiskStorage<u32>> =
-        MultiGraph::with_backend(backend);
+        MultiGraph::with_capacity(node_count as usize, backend);
 
     let total_start = Instant::now();
     let mut results: Vec<BenchResult> = Vec::new();
