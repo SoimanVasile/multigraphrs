@@ -28,9 +28,15 @@ pub struct SuperBlock{
     pub next_data_free_block: u64,
     /// Next free byte offset in `reverse_structure.bin`.
     pub next_reverse_structure_free_block: u64,
+
     pub head_linked_list_node: u64,
 
-    pub _padding: [u8; 968],
+
+    pub header_structure: [u64; 7],
+
+    pub header_reverse_structure: [u64; 7],
+
+    pub _padding: [u8; 856],
 }
 
 impl Default for SuperBlock{
@@ -63,8 +69,10 @@ impl SuperBlock {
             next_reverse_structure_free_block: 0,
 
             head_linked_list_node: u64::MAX,
+            header_structure: [u64::MAX; 7],
 
-            _padding: [0; 968],
+            header_reverse_structure: [u64::MAX; 7],
+            _padding: [0; 856],
 
         }
     }
@@ -116,18 +124,16 @@ impl SuperBlock {
     ///
     /// # Panics
     /// This method does not panic.
-    pub fn get_free_block_structure(&self) -> u64{
-        self.next_structure_free_block
+    pub fn get_free_block_structure(&mut self, size: &u64) -> u64{
+        self.next_structure_free_block += *size;
+
+        self.next_structure_free_block - *size
     }
 
-    /// Advances the structure free-block pointer by `size` bytes.
-    ///
-    /// Mutates `self` in place.
-    ///
-    /// # Panics
-    /// This method does not panic.
-    pub fn find_next_strcture_free_block(&mut self, size: &u64){
-        self.next_structure_free_block += *size;
+    pub fn get_free_block_reverse_structure(&mut self, size: &u64) -> u64{
+        self.next_reverse_structure_free_block += *size;
+
+        self.next_reverse_structure_free_block - *size
     }
 
     /// Returns the next free byte offset in `data.bin`.
@@ -157,18 +163,12 @@ impl SuperBlock {
     ///
     /// # Panics
     /// This method does not panic.
-    pub fn get_free_block_reverse_structure(&self) -> u64{
-        self.next_reverse_structure_free_block
+    pub fn get_ith_header_reverse_structure(&self, i: &u64) -> u64{
+        return self.header_reverse_structure[*i as usize];
     }
 
-    /// Advances the reverse-structure free-block pointer by `size` bytes.
-    ///
-    /// Mutates `self` in place.
-    ///
-    /// # Panics
-    /// This method does not panic.
-    pub fn find_next_reverse_structure_free_block(&mut self, size: &u64){
-        self.next_reverse_structure_free_block += *size;
+    pub fn get_ith_header_structure(&self, i: &u64) -> u64{
+        return self.header_structure[*i as usize]
     }
 
     pub fn next_free_node(&self) -> u64{
@@ -177,6 +177,10 @@ impl SuperBlock {
 
     pub fn change_header(&mut self, next_id: &u64){
         self.head_linked_list_node = *next_id;
+    }
+
+    pub fn next_header_structure(&mut self, index: &u64, next_id: &u64){
+        self.header_structure[*index as usize] = *next_id;
     }
         
 }

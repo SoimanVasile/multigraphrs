@@ -23,8 +23,7 @@ fn get_super_block_mut(file_manager_node: &mut FileManager) -> &mut SuperBlock {
 
 fn resizing_disk_node(file_manager: &mut FileManager, super_block: &mut SuperBlock, disk_node: &mut DiskNode) -> Result<(), std::io::Error>{
     disk_node.capacity *= 2;
-    let free_offset = super_block.get_free_block_structure();
-    super_block.find_next_strcture_free_block(&disk_node.capacity);
+    let free_offset = super_block.get_free_block_structure(&disk_node.capacity);
 
     while free_offset + disk_node.capacity > file_manager.file_len()?{
         file_manager.increase_file_size()?;
@@ -41,8 +40,7 @@ fn resizing_disk_node(file_manager: &mut FileManager, super_block: &mut SuperBlo
 pub fn resizing_disk_node_reverse(file_manager: &mut FileManager, super_block: &mut SuperBlock, disk_node: &mut DiskNode) -> Result<(), std::io::Error>{
     let old_offset = disk_node.list_reverse_edges_offset;
     disk_node.reverse_capacity *= 2;
-    let free_offset = super_block.get_free_block_reverse_structure();
-    super_block.find_next_reverse_structure_free_block(&disk_node.reverse_capacity);
+    let free_offset = super_block.get_free_block_reverse_structure(&disk_node.reverse_capacity);
 
     while free_offset + disk_node.reverse_capacity > file_manager.file_len().unwrap() {
         file_manager.increase_file_size().unwrap();
@@ -385,8 +383,7 @@ where
         if disk_node.list_edges_offset == u64::MAX{
             {
                 let sb = get_super_block_mut(&mut self.file_manager_node);
-                disk_node.list_edges_offset = sb.get_free_block_structure();
-                sb.find_next_strcture_free_block(&disk_node.capacity);
+                disk_node.list_edges_offset = sb.get_free_block_structure(&disk_node.capacity);
             }
 
             while disk_node.list_edges_offset + disk_node.capacity > self.file_manager_edge_structure.file_len().unwrap(){
@@ -494,8 +491,7 @@ where
 
         // First-time initialization: allocate a reverse edge block for this node
         if disk_node.list_reverse_edges_offset == u64::MAX {
-            disk_node.list_reverse_edges_offset = superblock.get_free_block_reverse_structure();
-            superblock.find_next_reverse_structure_free_block(&disk_node.reverse_capacity);
+            disk_node.list_reverse_edges_offset = superblock.get_free_block_reverse_structure(&disk_node.reverse_capacity);
 
             while disk_node.list_reverse_edges_offset + disk_node.reverse_capacity > self.file_manager_reverse_edge.file_len().unwrap() {
                 self.file_manager_reverse_edge.increase_file_size().unwrap();
