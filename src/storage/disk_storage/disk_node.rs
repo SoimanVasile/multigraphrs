@@ -50,6 +50,10 @@ impl DiskNode{
         self.list_edges_offset
     }
 
+    pub fn get_capacity(&self) -> u64{
+        self.capacity
+    }
+
     /// Returns the number of forward edges for this node.
     ///
     /// # Returns

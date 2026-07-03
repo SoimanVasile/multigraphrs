@@ -13,3 +13,11 @@ readme = "README.md"
 [dependencies]
 bytemuck = { version = "1.25.0", features = ["derive"] }
 memmap2 = "0.9.10"
+ahash = "0.8.11"
+
+[profile.profiling]
+inherits = "release"
+debug = true
+
+[dev-dependencies]
+tempfile = "3"

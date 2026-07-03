@@ -20,11 +20,11 @@ fn test_debug_reverse_edges() {
     // Edges from 61..=210 to 60
     for i in 61..=210 {
         // We will just use public api
-        backend.add_reverse_edge(60, i);
+        backend.add_reverse_edge(&60, &i);
     }
     
     // Verify Reverse Edges
-    let reverse_edges = backend.get_reverse_edges(60);
+    let reverse_edges = backend.get_reverse_edges(&60);
     println!("Reverse edges for 60 (len: {}): {:?}", reverse_edges.len(), reverse_edges);
     
     let expected: Vec<u64> = (61..=210).collect();
@@ -33,6 +33,6 @@ fn test_debug_reverse_edges() {
     }
     
     // Let's just print reverse edges
-    let reverse_edges = backend.get_reverse_edges(60);
+    let reverse_edges = backend.get_reverse_edges(&60);
     println!("Reverse edges for 60 (len: {}): {:?}", reverse_edges.len(), reverse_edges);
 }

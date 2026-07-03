@@ -11,38 +11,47 @@ use crate::storage::disk_storage::disk_node::DiskNode;
 use crate::StorageBackend;
 use crate::Edge;
 use crate::storage::disk_storage::file_manager::FileManager;
+use crate::storage::disk_storage::wal::{WalManager, WalTransaction, WalRecord, FileId};
 
 const SUPER_BLOCK_SIZE: usize = 1024;
 
-fn resizing_disk_node(file_manager: &mut FileManager, super_block: &mut SuperBlock, disk_node: &mut DiskNode) -> Result<(), std::io::Error>{
+fn resizing_disk_node(file_manager: &mut FileManager, super_block: &mut SuperBlock, disk_node: &mut DiskNode, mut tx: Option<&mut WalTransaction>) -> Result<(), std::io::Error>{
     disk_node.capacity *= 2;
-    let free_offset = super_block.get_free_block_structure();
-    super_block.find_next_strcture_free_block(&disk_node.capacity);
+    let free_offset = super_block.get_free_block_structure(&disk_node.capacity);
 
     while free_offset + disk_node.capacity > file_manager.file_len()?{
+        if let Some(ref mut t) = tx { t.increase_file_size(FileId::Structure); }
         file_manager.increase_file_size()?;
     }
     let edge_offset= disk_node.list_edges_offset;
     let edge_offset_end = edge_offset + (disk_node.number_of_edges * size_of::<DiskEdge>() as u64);
 
-    file_manager.copy_within(edge_offset, edge_offset_end, free_offset);
+    if let Some(t) = tx {
+        t.copy_within(FileId::Structure, edge_offset, edge_offset_end, free_offset);
+    } else {
+        file_manager.copy_within(edge_offset, edge_offset_end, free_offset);
+    }
     disk_node.list_edges_offset = free_offset;
 
     Ok(())
 }
 
-pub fn resizing_disk_node_reverse(file_manager: &mut FileManager, super_block: &mut SuperBlock, disk_node: &mut DiskNode) -> Result<(), std::io::Error>{
+pub fn resizing_disk_node_reverse(file_manager: &mut FileManager, super_block: &mut SuperBlock, disk_node: &mut DiskNode, mut tx: Option<&mut WalTransaction>) -> Result<(), std::io::Error>{
     let old_offset = disk_node.list_reverse_edges_offset;
     disk_node.reverse_capacity *= 2;
-    let free_offset = super_block.get_free_block_reverse_structure();
-    super_block.find_next_reverse_structure_free_block(&disk_node.reverse_capacity);
+    let free_offset = super_block.get_free_block_reverse_structure(&disk_node.reverse_capacity);
 
     while free_offset + disk_node.reverse_capacity > file_manager.file_len().unwrap() {
+        if let Some(ref mut t) = tx { t.increase_file_size(FileId::Reverse); }
         file_manager.increase_file_size().unwrap();
     }
 
     let src_end = old_offset + (disk_node.number_of_reverse_edges * size_of::<u64>() as u64);
-    file_manager.copy_within(old_offset, src_end, free_offset);
+    if let Some(t) = tx {
+        t.copy_within(FileId::Reverse, old_offset, src_end, free_offset);
+    } else {
+        file_manager.copy_within(old_offset, src_end, free_offset);
+    }
     disk_node.list_reverse_edges_offset = free_offset;
     Ok(())
 }
@@ -56,6 +65,7 @@ where
     pub(crate) file_manager_edge_structure: FileManager,
     pub(crate) file_manager_reverse_edge: FileManager,
     pub(crate) file_manager_weight_data: FileManager,
+    pub(crate) wal_manager: WalManager,
     _marker: PhantomData<W>,
 }
 
@@ -104,6 +114,9 @@ where
             .expect("Failed to open the file_data");
 
 
+        let wal_manager = WalManager::new(dir.join("wal.bin"))
+            .expect("Failed to open wal.bin");
+
         if node_file_created{
             let initial_super_block = SuperBlock::new();
             let bytes_superblock: &[u8] = bytemuck::bytes_of(&initial_super_block);
@@ -115,6 +128,7 @@ where
             file_manager_edge_structure: file_structure,
             file_manager_reverse_edge: file_reverse,
             file_manager_weight_data: file_data,
+            wal_manager,
             _marker: PhantomData::<W>
         }
     }
@@ -134,10 +148,19 @@ where
     /// While this function does not explicitly panic, accessing the returned data 
     /// may cause a hardware exception (SIGBUS) if the underlying file is 
     /// truncated or deleted by another process.
+    pub fn write_superblock(&mut self, superblock: &SuperBlock, tx: Option<&mut WalTransaction>) {
+        let bytes = bytemuck::bytes_of(superblock);
+        if let Some(t) = tx {
+            t.write_bytes(FileId::Node, 0, bytes);
+        } else {
+            self.file_manager_node.writing_bytes_to_mmap(0, SUPER_BLOCK_SIZE as u64, bytes);
+        }
+    }
+
     pub fn get_super_block(&self) -> SuperBlock{
         let superblock_bytes:&[u8] = self.file_manager_node.reading_bytes(0, SUPER_BLOCK_SIZE as u64);
         let super_block: &SuperBlock = bytemuck::from_bytes(superblock_bytes);
-        super_block.clone()
+        *super_block
     }
 
     /// Calculates the absolute byte offset of a [`DiskNode`] within the node storage file
@@ -171,14 +194,19 @@ where
     /// # Panics
     /// Panics if the calculated offset or node size exceeds the current bounds of the memory map.
     /// See [`writing_bytes_to_mmap`]
-    pub fn write_disk_node(&mut self, disk_node: &DiskNode) -> Result<(), std::io::Error>{
+    pub fn write_disk_node(&mut self, disk_node: &DiskNode, mut tx: Option<&mut WalTransaction>) -> Result<(), std::io::Error>{
         let offset = self.calculate_node_offset(&disk_node.node_idx);
         let bytes = disk_node.convert_to_bytes();
 
         while offset + bytes.len() as u64 > self.file_manager_node.file_len()?{
+            if let Some(ref mut t) = tx { t.increase_file_size(FileId::Node); }
             self.file_manager_node.increase_file_size()?;
         }
-        self.file_manager_node.writing_bytes_to_mmap(offset, offset + bytes.len() as u64, bytes);
+        if let Some(t) = tx {
+            t.write_bytes(FileId::Node, offset, bytes);
+        } else {
+            self.file_manager_node.writing_bytes_to_mmap(offset, offset + bytes.len() as u64, bytes);
+        }
         Ok(())
     }
 
@@ -202,7 +230,7 @@ where
         let disk_node_bytes: &[u8] = self.file_manager_node.reading_bytes(offset, offset + std::mem::size_of::<DiskNode>() as u64);
         let disk_node: &DiskNode = bytemuck::from_bytes(disk_node_bytes);
 
-        disk_node.clone()
+        *disk_node
     }
 
     /// Computes the byte offset of the `edge_numbers`-th edge within a node's
@@ -228,21 +256,24 @@ where
     ///
     /// # Panics
     /// Panics if the computed write region exceeds the structure memory map bounds.
-    pub fn write_disk_edge(&mut self, disk_node: &mut DiskNode, disk_edge: &DiskEdge, super_block: &mut SuperBlock) -> Result<(), std::io::Error>{
+    pub fn write_disk_edge(&mut self, disk_node: &mut DiskNode, disk_edge: &DiskEdge, superblock: &mut SuperBlock, mut tx: Option<&mut WalTransaction>) -> Result<(), std::io::Error>{
 
-        // Checks if we add this edge, it will overflow the already allocated memory and allocates
-        // more if its full
         if  !disk_node.verify_enough_capacity(){
-            resizing_disk_node(&mut self.file_manager_edge_structure, super_block, disk_node)?;
+            resizing_disk_node(&mut self.file_manager_edge_structure, superblock, disk_node, tx.as_deref_mut())?;
         }
 
         let index = disk_node.number_of_edges;
         let edge_offset = disk_node.get_edge_offset() + index * size_of::<DiskEdge>() as u64;
         let disk_edge_bytes: &[u8] = disk_edge.convert_into_bytes();
-        self.file_manager_edge_structure.writing_bytes_to_mmap(edge_offset, edge_offset + size_of::<DiskEdge>() as u64, disk_edge_bytes);
+
+        if let Some(ref mut t) = tx {
+            t.write_bytes(FileId::Structure, edge_offset, disk_edge_bytes);
+        } else {
+            self.file_manager_edge_structure.writing_bytes_to_mmap(edge_offset, edge_offset + size_of::<DiskEdge>() as u64, disk_edge_bytes);
+        }
 
         disk_node.number_of_edges+=1;
-        self.write_disk_node(&disk_node)?;
+        self.write_disk_node(disk_node, tx)?;
         Ok(())
     }
 
@@ -254,13 +285,18 @@ where
     ///
     /// # Panics
     /// Panics if the write region exceeds the data memory map bounds.
-    pub fn write_weight(&mut self, weight_data_bytes: &[u8], weight_offset: &u64) -> Result<(), std::io::Error>{
+    pub fn write_weight(&mut self, weight_data_bytes: &[u8], weight_offset: &u64, mut tx: Option<&mut WalTransaction>) -> Result<(), std::io::Error>{
 
-        while weight_offset + weight_data_bytes.len() as u64 > self.file_manager_weight_data.file_len()?{
+        while *weight_offset + weight_data_bytes.len() as u64 > self.file_manager_weight_data.file_len()?{
+            if let Some(ref mut t) = tx { t.increase_file_size(FileId::Data); }
             self.file_manager_weight_data.increase_file_size()?;
         }
 
-        self.file_manager_weight_data.writing_bytes_to_mmap(*weight_offset, *weight_offset + weight_data_bytes.len() as u64, weight_data_bytes);
+        if let Some(t) = tx {
+            t.write_bytes(FileId::Data, *weight_offset, weight_data_bytes);
+        } else {
+            self.file_manager_weight_data.writing_bytes_to_mmap(*weight_offset, *weight_offset + weight_data_bytes.len() as u64, weight_data_bytes);
+        }
 
         Ok(())
     }
@@ -271,11 +307,6 @@ where
     ///
     /// # Panics
     /// Panics if the superblock bytes exceed the node memory map bounds.
-    pub fn write_superblock(&mut self, superblock: &SuperBlock) {
-
-        let bytes: &[u8] = superblock.convert_to_bytes();
-        self.file_manager_node.writing_bytes_to_mmap(0, SUPER_BLOCK_SIZE as u64, bytes);
-    }
 
     /// Clears all edges from a node by zeroing its edge region on disk
     /// and resetting the edge count to 0.
@@ -284,7 +315,7 @@ where
     ///
     /// # Panics
     /// Panics if the edge region exceeds the structure memory map bounds.
-    pub fn remove_edges_from_node(&mut self, disk_node: &mut DiskNode)-> Result<(), std::io::Error>{
+    pub fn remove_edges_from_node(&mut self, disk_node: &mut DiskNode, mut tx: Option<&mut WalTransaction>)-> Result<(), std::io::Error>{
         if disk_node.number_of_edges == 0{
             return Ok(());
         }
@@ -295,14 +326,18 @@ where
         let number_of_bytes = number_of_edges * size_of::<DiskEdge>() as u64;
         let end = start + number_of_bytes;
 
-        self.file_manager_edge_structure.zeroing_mmap(start, end);
+        if let Some(ref mut t) = tx {
+            t.zero_mmap(FileId::Structure, start, end);
+        } else {
+            self.file_manager_edge_structure.zeroing_mmap(start, end);
+        }
 
         let mut super_block = self.get_super_block();
         super_block.edge_count -= disk_node.number_of_edges;
-        self.write_superblock(&super_block);
+        self.write_superblock(&super_block, tx.as_deref_mut());
 
         disk_node.number_of_edges = 0;
-        self.write_disk_node(disk_node)?;
+        self.write_disk_node(disk_node, tx)?;
         Ok(())
     }
 
@@ -316,7 +351,7 @@ where
     /// * Panics if `edge_number >= disk_node.number_of_edges`
     ///   (causes underflow on `number_of_edges - 1`).
     /// * Panics if any computed offsets exceed the structure memory map bounds.
-    pub fn swap_remove_disk_edge(&mut self, disk_node: &mut DiskNode, edge_number: &u64) -> Result<(), std::io::Error>{
+    pub fn swap_remove_disk_edge(&mut self, disk_node: &mut DiskNode, edge_number: &u64, mut tx: Option<&mut WalTransaction>) -> Result<(), std::io::Error>{
         let last_index = disk_node.number_of_edges - 1;
 
         // only copy if we're not already removing the last edge
@@ -327,15 +362,71 @@ where
             let src_end = src_start + size_of::<DiskEdge>() as u64;
             let dest_start = edge_offset_removed;
 
-            self.file_manager_edge_structure.copy_within(src_start, src_end, dest_start);
+            if let Some(ref mut t) = tx {
+                t.copy_within(FileId::Structure, src_start, src_end, dest_start);
+            } else {
+                self.file_manager_edge_structure.copy_within(src_start, src_end, dest_start);
+            }
         }
 
         disk_node.number_of_edges -= 1;
         let mut super_block = self.get_super_block();
         super_block.edge_count -=1;
-        self.write_superblock(&super_block);
-        self.write_disk_node(disk_node)?;
+        self.write_superblock(&super_block, tx.as_deref_mut());
+        self.write_disk_node(disk_node, tx)?;
         Ok(())
+    }
+
+    pub fn next_node_id(&self, superblock: &mut SuperBlock) -> u64 {
+        let node_id = superblock.next_free_node();
+
+        if node_id == u64::MAX {
+            superblock.node_count += 1;
+            return superblock.node_count - 1;
+        }
+
+        let disk_node = self.get_disk_node(&node_id);
+        let next_id = disk_node.get_edge_offset(); // We store the ID directly
+        superblock.change_header(&next_id);
+
+        node_id
+    }
+
+    pub fn apply_wal_transaction(&mut self, tx: &WalTransaction) {
+        for record in &tx.records {
+            match record {
+                WalRecord::Write { file_id, offset, bytes } => {
+                    let fm = match file_id {
+                        FileId::Node => &mut self.file_manager_node,
+                        FileId::Structure => &mut self.file_manager_edge_structure,
+                        FileId::Reverse => &mut self.file_manager_reverse_edge,
+                        FileId::Data => &mut self.file_manager_weight_data,
+                    };
+                    fm.writing_bytes_to_mmap(*offset, *offset + bytes.len() as u64, bytes);
+                }
+                WalRecord::Zero { file_id, offset, end } => {
+                    let fm = match file_id {
+                        FileId::Node => &mut self.file_manager_node,
+                        FileId::Structure => &mut self.file_manager_edge_structure,
+                        FileId::Reverse => &mut self.file_manager_reverse_edge,
+                        FileId::Data => &mut self.file_manager_weight_data,
+                    };
+                    fm.zeroing_mmap(*offset, *end);
+                }
+                WalRecord::CopyWithin { file_id, src_start, src_end, dest_start } => {
+                    let fm = match file_id {
+                        FileId::Node => &mut self.file_manager_node,
+                        FileId::Structure => &mut self.file_manager_edge_structure,
+                        FileId::Reverse => &mut self.file_manager_reverse_edge,
+                        FileId::Data => &mut self.file_manager_weight_data,
+                    };
+                    fm.copy_within(*src_start, *src_end, *dest_start);
+                }
+                WalRecord::IncreaseFileSize { file_id: _ } => {
+                    // Already applied directly to satisfy length checks during buffer phase.
+                }
+            }
+        }
     }
 }
 
@@ -344,86 +435,90 @@ where
     W: Clone + PartialEq + FromDiskBytes
 {
     type EdgeIter<'a> = DiskEdgeIterator<'a, W> where Self: 'a, W: 'a;
-    fn add_node(&mut self){
+    fn add_node(&mut self) -> u64 {
+        let mut tx = WalTransaction::new();
         let mut superblock: SuperBlock = self.get_super_block();
 
-        let new_node_id = superblock.get_node_count();
+        let new_node_id = self.next_node_id(&mut superblock);
         let disk_node: DiskNode = DiskNode::new(new_node_id, u64::MAX, u64::MAX);
-        self.write_disk_node(&disk_node);
+        
+        self.write_disk_node(&disk_node, Some(&mut tx)).unwrap();
+        self.write_superblock(&superblock, Some(&mut tx));
 
-        superblock.increment_node_counter();
+        // Commit to WAL and then flush to actual mmap
+        self.wal_manager.commit(&tx).unwrap();
+        self.apply_wal_transaction(&tx);
 
-        self.write_superblock(&superblock);
+        new_node_id
     }
 
-    fn add_edge_to_node(&mut self, node: u64, edge: &Edge<W>) {
-
-        // gets the superblock from node
-        let mut superblock: SuperBlock = self.get_super_block();
-
-        let mut disk_node = self.get_disk_node(&node);
+    fn add_edge_to_node(&mut self, node: &u64, edge: &Edge<W>) {
+        let mut tx = WalTransaction::new();
+        let mut disk_node = self.get_disk_node(node);
+        let mut superblock = self.get_super_block();
 
         if disk_node.list_edges_offset == u64::MAX{
-
-            //initialize the disk node and puts the padding for space and the next free edge block
-            disk_node.list_edges_offset = superblock.get_free_block_structure();
-            superblock.find_next_strcture_free_block(&disk_node.capacity);
+            disk_node.list_edges_offset = superblock.get_free_block_structure(&disk_node.capacity);
 
             while disk_node.list_edges_offset + disk_node.capacity > self.file_manager_edge_structure.file_len().unwrap(){
-                self.file_manager_edge_structure.increase_file_size();
+                tx.increase_file_size(FileId::Structure);
+                self.file_manager_edge_structure.increase_file_size().unwrap();
             }
-            self.file_manager_edge_structure.zeroing_mmap(disk_node.list_edges_offset, disk_node.list_edges_offset + disk_node.capacity);
+            tx.zero_mmap(FileId::Structure, disk_node.list_edges_offset, disk_node.list_edges_offset + disk_node.capacity);
+            // We apply it immediately to mmap because otherwise subsequent steps in THIS tx might not work? No, write_disk_edge just writes bytes.
         }
 
         let data_offset = superblock.get_free_block_data();
-        
-        // creates the disk edge and then conversts it into bytes and then writes it into
-        // file_structure
         let disk_edge: DiskEdge = DiskEdge::new(data_offset, std::mem::size_of::<W>() as u64, edge.get_target());
 
-        self.write_disk_edge(&mut disk_node, &disk_edge, &mut superblock);
+        self.write_disk_edge(&mut disk_node, &disk_edge, &mut superblock, Some(&mut tx)).unwrap();
         
-        //converts the weight of the edge into bytes and then writes into 
         let weight_data_bytes: &[u8] = edge.convert_to_bytes();
-        self.write_weight(weight_data_bytes, &data_offset);
+        self.write_weight(weight_data_bytes, &data_offset, Some(&mut tx)).unwrap();
 
         superblock.next_data_free_block += weight_data_bytes.len() as u64;
+        superblock.edge_count += 1;
+        
+        self.write_superblock(&superblock, Some(&mut tx));
 
-        superblock.edge_count+=1;
-        self.write_superblock(&superblock);
+        self.wal_manager.commit(&tx).unwrap();
+        self.apply_wal_transaction(&tx);
     }
 
-    fn node_len(&self, node: u64) -> usize {
-        let disk_node: DiskNode = self.get_disk_node(&node);
+    fn node_len(&self, node: &u64) -> usize {
+        let disk_node: DiskNode = self.get_disk_node(node);
         disk_node.get_number_of_edges() as usize
     }
 
-    fn get_edges<'a>(&'a self, node: u64) -> Self::EdgeIter<'a> where W: 'a {
-        let disk_node: DiskNode = self.get_disk_node(&node);
+    fn get_edges<'a>(&'a self, node: &u64) -> Self::EdgeIter<'a> where W: 'a {
+        let disk_node: DiskNode = self.get_disk_node(node);
         DiskEdgeIterator::new(self, &disk_node.get_edge_offset(), &disk_node.get_number_of_edges())
     }
 
-    fn remove_edge<F>(&mut self, source: u64, edge: &Edge<W>, func: F) -> Result<Edge<W>, crate::GraphErrors>
+    fn remove_edge<F>(&mut self, source: &u64, edge: &Edge<W>, func: F) -> Result<Edge<W>, crate::GraphErrors>
         where
            F: Fn(&Edge<W>, &Edge<W>) -> bool {
 
-        let edges = self.get_edges(source.clone());
+        let edges = self.get_edges(source);
 
-        if let Some((idk, found_edge)) = edges.enumerate().find(|(_,e)| func(&e, edge)){
-            let mut disk_node: DiskNode = self.get_disk_node(&source);
-            self.swap_remove_disk_edge(&mut disk_node, &(idk as u64));
+        if let Some((idk, found_edge)) = edges.enumerate().find(|(_,e)| func(e, edge)){
+            let mut disk_node: DiskNode = self.get_disk_node(source);
+            let mut tx = WalTransaction::new();
+            self.swap_remove_disk_edge(&mut disk_node, &(idk as u64), Some(&mut tx)).unwrap();
+            self.wal_manager.commit(&tx).unwrap();
+            self.apply_wal_transaction(&tx);
             return Ok(found_edge);
         }
         Err(GraphErrors::EdgeDoesntExists)
     }
 
-    fn contains_edge(&self, source: u64, target: u64) -> Result<Edge<W>, crate::GraphErrors> {
-        let _disk_node: DiskNode = self.get_disk_node(&source);
+    fn contains_edge(&self, source: &u64, target: &u64) -> Result<Edge<W>, crate::GraphErrors> {
+        let _disk_node: DiskNode = self.get_disk_node(source);
 
         let edges = self.get_edges(source);
 
         for edge in edges{
-            if edge.get_target() == target{
+            if edge.get_target() == *target{
                 return Ok(edge);
             }
         }
@@ -442,90 +537,101 @@ where
     }
 
     fn increment_node_counter(&mut self) {
+        let mut tx = WalTransaction::new();
         let mut super_block = self.get_super_block();
         super_block.increment_node_counter();
-        self.write_superblock(&super_block);
+        self.write_superblock(&super_block, Some(&mut tx));
+        self.wal_manager.commit(&tx).unwrap();
+        self.apply_wal_transaction(&tx);
     }
 
-    fn clear_node_edges(&mut self, node: u64) {
-        let mut disk_node = self.get_disk_node(&node);
-        self.remove_edges_from_node(&mut disk_node);
-
+    fn clear_node_edges(&mut self, node: &u64) {
+        let mut tx = WalTransaction::new();
+        let mut disk_node = self.get_disk_node(node);
+        self.remove_edges_from_node(&mut disk_node, Some(&mut tx)).unwrap();
+        self.wal_manager.commit(&tx).unwrap();
+        self.apply_wal_transaction(&tx);
     }
 
-    fn remove_edge_by_target(&mut self, source: u64, target: u64) {
-        let mut disk_node: DiskNode = self.get_disk_node(&source);
+    fn remove_edge_by_target(&mut self, source: &u64, target: &u64) {
+        let mut disk_node: DiskNode = self.get_disk_node(source);
 
         for edge_number in 0..disk_node.get_number_of_edges(){
-            let edge_offset = self.calculate_edge_offset(&disk_node.get_edge_offset(), &(edge_number as u64));
+            let edge_offset = self.calculate_edge_offset(&disk_node.get_edge_offset(), &(edge_number));
 
             let struct_bytes = self.file_manager_edge_structure
                 .reading_bytes(edge_offset, edge_offset + std::mem::size_of::<DiskEdge>() as u64);
             let disk_edge: &DiskEdge = bytemuck::from_bytes(struct_bytes);
 
-            if disk_edge.node == target{
-                self.swap_remove_disk_edge(&mut disk_node, &(edge_number));
+            if disk_edge.node == *target{
+                let mut tx = WalTransaction::new();
+                self.swap_remove_disk_edge(&mut disk_node, &(edge_number), Some(&mut tx)).unwrap();
+                self.wal_manager.commit(&tx).unwrap();
+                self.apply_wal_transaction(&tx);
                 return;
             }
         }
-        return;
     }
 
-    fn add_reverse_edge(&mut self, source: u64, origin: u64) {
-        let mut disk_node: DiskNode = self.get_disk_node(&source);
+    fn add_reverse_edge(&mut self, source: &u64, origin: &u64) {
+        let mut tx = WalTransaction::new();
+        let mut disk_node: DiskNode = self.get_disk_node(source);
         let mut superblock: SuperBlock = self.get_super_block();
 
         // First-time initialization: allocate a reverse edge block for this node
         if disk_node.list_reverse_edges_offset == u64::MAX {
-            disk_node.list_reverse_edges_offset = superblock.get_free_block_reverse_structure();
-            superblock.find_next_reverse_structure_free_block(&disk_node.reverse_capacity);
+            disk_node.list_reverse_edges_offset = superblock.get_free_block_reverse_structure(&disk_node.reverse_capacity);
 
             while disk_node.list_reverse_edges_offset + disk_node.reverse_capacity > self.file_manager_reverse_edge.file_len().unwrap() {
+                tx.increase_file_size(FileId::Reverse);
                 self.file_manager_reverse_edge.increase_file_size().unwrap();
             }
-            self.file_manager_reverse_edge.zeroing_mmap(
-                disk_node.list_reverse_edges_offset,
-                disk_node.list_reverse_edges_offset + disk_node.reverse_capacity,
-            );
+            tx.zero_mmap(FileId::Reverse, disk_node.list_reverse_edges_offset, disk_node.list_reverse_edges_offset + disk_node.reverse_capacity);
         }
 
         // Check if adding this reverse edge would overflow the allocated capacity
         if !disk_node.verify_enough_reverse_capacity(){
-            resizing_disk_node_reverse(&mut self.file_manager_reverse_edge, &mut superblock, &mut disk_node);
+            resizing_disk_node_reverse(&mut self.file_manager_reverse_edge, &mut superblock, &mut disk_node, Some(&mut tx)).unwrap();
         }
 
         let edge_offset = disk_node.list_reverse_edges_offset + disk_node.number_of_reverse_edges * size_of::<u64>() as u64;
 
         let bytes = &origin.to_le_bytes();
-        self.file_manager_reverse_edge.writing_bytes_to_mmap(edge_offset, edge_offset + bytes.len() as u64, bytes);
+        tx.write_bytes(FileId::Reverse, edge_offset, bytes);
 
         disk_node.number_of_reverse_edges += 1;
-        self.write_disk_node(&disk_node);
-        self.write_superblock(&superblock);
+        self.write_disk_node(&disk_node, Some(&mut tx)).unwrap();
+        self.write_superblock(&superblock, Some(&mut tx));
+        
+        self.wal_manager.commit(&tx).unwrap();
+        self.apply_wal_transaction(&tx);
     }
 
-    fn get_reverse_edges(&self, node: u64) -> Vec<u64> {
-        let disk_node = self.get_disk_node(&node);
-        DiskReverseEdgeIterator::new(&self, &disk_node.list_reverse_edges_offset, &disk_node.number_of_reverse_edges).collect()
+    fn get_reverse_edges(&self, node: &u64) -> Vec<u64> {
+        let disk_node = self.get_disk_node(node);
+        DiskReverseEdgeIterator::new(self, &disk_node.list_reverse_edges_offset, &disk_node.number_of_reverse_edges).collect()
     }
 
-    fn clear_reverse_edges(&mut self, _node: u64) {
-        let mut disk_node: DiskNode = self.get_disk_node(&_node);
+    fn clear_reverse_edges(&mut self, node: &u64) {
+        let mut disk_node: DiskNode = self.get_disk_node(node);
         if disk_node.number_of_reverse_edges == 0{
             return;
         }
 
+        let mut tx = WalTransaction::new();
         let start = disk_node.list_reverse_edges_offset;
         let number_of_bytes = size_of::<u64>() as u64 * disk_node.number_of_reverse_edges;
         let end = start + number_of_bytes;
-        self.file_manager_reverse_edge.zeroing_mmap(start, end);
+        tx.zero_mmap(FileId::Reverse, start, end);
 
         disk_node.number_of_reverse_edges = 0;
-        self.write_disk_node(&disk_node);
+        self.write_disk_node(&disk_node, Some(&mut tx)).unwrap();
+        self.wal_manager.commit(&tx).unwrap();
+        self.apply_wal_transaction(&tx);
     }
 
-    fn remove_reverse_edge(&mut self, source: u64, origin: u64) {
-        let mut disk_node: DiskNode = self.get_disk_node(&source);
+    fn remove_reverse_edge(&mut self, source: &u64, origin: &u64) {
+        let mut disk_node: DiskNode = self.get_disk_node(source);
 
         if disk_node.list_reverse_edges_offset == u64::MAX {
             return;
@@ -539,7 +645,8 @@ where
             let bytes = self.file_manager_reverse_edge.reading_bytes(start, end);
             let current_origin: u64 = u64::from_le_bytes(bytes.try_into().unwrap());
 
-            if current_origin == origin {
+            if current_origin == *origin {
+                let mut tx = WalTransaction::new();
                 let last_index = disk_node.number_of_reverse_edges - 1;
                 
                 if i != last_index {
@@ -547,20 +654,34 @@ where
                     let last_start = last_offset;
                     let last_end = last_start + size_of::<u64>() as u64;
                     
-                    self.file_manager_reverse_edge.copy_within(last_start, last_end, start);
+                    tx.copy_within(FileId::Reverse, last_start, last_end, start);
                 }
 
                 disk_node.number_of_reverse_edges -= 1;
-                self.write_disk_node(&disk_node);
+                self.write_disk_node(&disk_node, Some(&mut tx)).unwrap();
+                self.wal_manager.commit(&tx).unwrap();
+                self.apply_wal_transaction(&tx);
                 return;
             }
         }
     }
 
-    fn decrement_node_counter(&mut self) {
-        let mut super_block = self.get_super_block();
-        super_block.node_count -= 1;
-        self.write_superblock(&super_block);
+    fn free_node_id(&mut self, node_id: &u64) {
+        let mut tx = WalTransaction::new();
+        let mut superblock = self.get_super_block();
+        let head = superblock.next_free_node();
+        
+        let disk_node = DiskNode::new(u64::MAX, head, u64::MAX);
+        let offset = self.calculate_node_offset(node_id);
+        let bytes = disk_node.convert_to_bytes();
+        tx.write_bytes(FileId::Node, offset, bytes);
+
+        superblock.change_header(node_id);
+        self.write_superblock(&superblock, Some(&mut tx));
+        
+        self.wal_manager.commit(&tx).unwrap();
+        self.apply_wal_transaction(&tx);
     }
 }
+
 

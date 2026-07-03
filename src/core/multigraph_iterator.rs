@@ -25,21 +25,21 @@ where
 {
     type Item = (&'a K, Vec<EdgeView<K, W>>);
     fn next(&mut self) -> Option<Self::Item>{
-        if self.graph.next_id <= self.index{
+        if (self.graph.reversed_hashed_nodes.len() as u64) <= self.index{
             return None;
         }
 
-        while self.index < self.graph.next_id && self.graph.reversed_hashed_nodes[self.index as usize].is_none(){
+        while self.index < (self.graph.reversed_hashed_nodes.len() as u64) && self.graph.reversed_hashed_nodes[self.index as usize].is_none(){
             self.index += 1;
         }
 
-        if self.index >= self.graph.next_id {
+        if self.index >= (self.graph.reversed_hashed_nodes.len() as u64) {
             return None;
         }
 
         let current = self.index;
         self.index += 1;
-        let neighbours: Vec<_> = self.graph.adjacency_list.get_edges(current).collect();
+        let neighbours: Vec<_> = self.graph.adjacency_list.get_edges(&current).collect();
         Some((self.graph.reversed_hashed_nodes[current as usize].as_ref().unwrap(), neighbours.into_iter()
             .map(|e| EdgeView::new(self.graph.reversed_hashed_nodes[e.get_target() as usize].as_ref().unwrap(), &e.weight))
             .collect()
