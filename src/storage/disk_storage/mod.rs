@@ -6,3 +6,4 @@ pub mod disk_edge_iterator;
 pub mod disk_multigraph;
 pub mod file_manager;
 pub mod allocater;
+pub mod wal;
