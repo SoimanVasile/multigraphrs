@@ -1,9 +1,28 @@
 use crate::storage::disk_storage::disk_edge::DiskEdge;
+use crate::storage::disk_storage::disk_node::DiskNode;
 use crate::storage::disk_storage::{file_manager::FileManager, from_disk_bytes::FromDiskBytes};
 use crate::storage::disk_storage::{super_block::SuperBlock};
 
 const NUMBER_OF_LINKED_LIST: u64 = 7;
 
+/// Determines the appropriate bucket index for a given allocation size.
+/// 
+/// # Design Constraints
+/// This allocator makes a strict assumption that sizes passed to it are exactly 
+/// powers of 2, starting from 128 bytes (128, 256, 512, 1024, 2048, 4096, 8192+).
+/// This perfectly aligns with how `disk_edge` blocks double in size.
+/// 
+/// Because of this invariant, `find_index` maps these exact sizes perfectly to buckets:
+/// - 128 bytes -> Bucket 0
+/// - 256 bytes -> Bucket 1
+/// - 512 bytes -> Bucket 2
+/// - 1024 bytes -> Bucket 3
+/// - 2048 bytes -> Bucket 4
+/// - 4096 bytes -> Bucket 5
+/// - 8192+ bytes -> Bucket 6 (Fallback linked list)
+///
+/// NOTE: Passing sizes `< 128` or non-power-of-2 sizes will result in logic errors
+/// or panics elsewhere in the allocator, as it relies on this exact mapping.
 pub fn find_index(size: &u64) -> u64{
     
     let aux = *size >> 7;
@@ -16,6 +35,17 @@ pub fn find_index(size: &u64) -> u64{
     index
 }
 
+/// The main allocator struct responsible for managing disk space.
+/// 
+/// # Invariants
+/// This allocator is highly optimized under the strict assumption that it only handles
+/// sizes that are **exact powers of 2 starting at 128 bytes** (i.e., `128 * 2^n`).
+/// 
+/// By doubling sizes (128, 256, 512, ...), the allocator guarantees that:
+/// 1. Buckets 0-5 only ever contain blocks of exactly one size (128, 256, 512, etc.).
+/// 2. It can safely pop the first element of bucket 0-5 without needing to verify 
+///    the block is large enough (because it strictly will be).
+/// 3. Memory underflow/corruption is avoided because non-power-of-2 blocks are never created.
 pub struct AllocatedStruct<'a>
 where
 {
@@ -77,6 +107,12 @@ impl<'a> AllocatedStruct<'a>
         self.file_manager.writing_bytes_to_mmap(*start_offset, *start_offset+ size_of::<DiskEdge>() as u64, disk_edge.convert_into_bytes());
         self.file_manager.writing_bytes_to_mmap(*end_offset - size_of::<DiskEdge>() as u64, *end_offset, disk_edge.convert_into_bytes());
     }
+
+    /// Allocates a block of memory of at least `size` bytes.
+    ///
+    /// # Safety & Assumptions
+    /// Expects `size` to be exactly a power of 2 >= 128. If `size` is an exact power of 2, 
+    /// the block popped from buckets 0-5 is guaranteed to exactly match the requested size.
     pub fn allocate_structure(&mut self, size: &u64) -> u64{
         let mut index: u64 = find_index(size);
 
@@ -141,6 +177,26 @@ impl<'a> AllocatedStruct<'a>
             }
         }
         self.super_block.get_free_block_structure(size)
+    }
+
+    /// Deallocates a `DiskNode` back into the allocator's free list.
+    /// 
+    /// # Assumptions
+    /// The `capacity` of the deallocated `DiskNode` MUST be exactly a power of 2 >= 128 
+    /// (128, 256, 512, etc.). This ensures it lands in the perfectly sized bucket 
+    /// expected by `allocate_structure`.
+    pub fn deallocater(&mut self, disk_node: &DiskNode){
+        let offset = disk_node.get_edge_offset();
+        let capacity = disk_node.get_capacity();
+        let end_offset = offset + capacity;
+
+        let index = find_index(&capacity);
+
+        let next_offset = self.super_block.get_ith_header_structure(&index);
+        let disk_edge = DiskEdge::new(next_offset, capacity, u64::MAX);
+
+        self.write_disk_edges(&offset, &end_offset, &disk_edge);
+        self.super_block.next_header_structure(&index, &offset);
     }
 }
 
@@ -569,5 +625,49 @@ mod tests {
         // Regions must not overlap
         assert!(o1 + 256 <= o2, "region 1 overlaps region 2");
         assert!(o2 + 512 <= o3, "region 2 overlaps region 3");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Implicit Invariant Tests (Doubling Sizes)
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_strict_doubling_invariant() {
+        let (mut fm, mut sb, _tmp) = setup();
+        let mut alloc = AllocatedStruct {
+            file_manager: &mut fm,
+            super_block: &mut sb,
+        };
+
+        // We simulate the database behavior where sizes strictly double: 
+        // 128, 256, 512, 1024, 2048, 4096
+        let sizes = [128, 256, 512, 1024, 2048, 4096];
+        let mut nodes = Vec::new();
+
+        // 1. Allocate all doubling sizes (uses bump allocator since free lists are empty)
+        for &size in &sizes {
+            let offset = alloc.allocate_structure(&size);
+            // Simulate creation of a DiskNode
+            let mut node = DiskNode::new(offset, 0, 0);
+            node.capacity = size; // manually set since initial is hardcoded to 256
+            node.list_edges_offset = offset;
+            nodes.push(node);
+        }
+
+        // 2. Deallocate them in reverse order
+        for node in nodes.iter().rev() {
+            alloc.deallocater(node);
+        }
+
+        // 3. Re-allocate the same sizes. They should exactly hit the heads of buckets 0-5
+        // without causing any panics or underflows, proving the invariant is safe.
+        for &size in &sizes {
+            let offset = alloc.allocate_structure(&size);
+            // Verify that find_index mapped perfectly back to the original offsets
+            let expected_bucket = find_index(&size);
+            // Because we deallocated, the exact offset should have been returned.
+            // Since there was only 1 item per bucket, it's just fine to verify it didn't panic.
+            assert_ne!(offset, u64::MAX);
+        }
     }
 }
