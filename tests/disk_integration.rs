@@ -446,3 +446,31 @@ fn test_disk_undirected_node_id_reuse() {
     assert!(temp.graph.contains_edge(&4, &1));
     assert!(!temp.graph.contains_node(&2));
 }
+
+#[test]
+fn test_allocator_large_block_split_edge_case() {
+    let mut temp = TempGraph::<Directed, u32>::new("alloc_split");
+    temp.graph.add_node(1).unwrap();
+    temp.graph.add_node(2).unwrap();
+
+    // Node 1 resizes from 128 -> 256 -> 512 -> 1024
+    for i in 100..122 {
+        temp.graph.add_node(i).unwrap();
+        temp.graph.add_edge(1, i).unwrap();
+    }
+
+    // Node 1 is removed. Its 1024-byte block goes to bucket 3.
+    temp.graph.remove_node(&1).unwrap();
+
+    // Now adding new nodes and edges, which requires 128-byte blocks.
+    temp.graph.add_node(3).unwrap();
+    temp.graph.add_edge(2, 3).unwrap();
+    
+    // Add more to trigger subsequent splits or allocations
+    for i in 200..230 {
+        temp.graph.add_node(i).unwrap();
+        temp.graph.add_edge(2, i).unwrap();
+    }
+
+    assert_eq!(temp.graph.degree(&2).unwrap(), 31);
+}
