@@ -2,6 +2,7 @@ use crate::storage::disk_storage::disk_edge::DiskEdge;
 use crate::storage::disk_storage::disk_node::DiskNode;
 use crate::storage::disk_storage::{file_manager::FileManager, from_disk_bytes::FromDiskBytes};
 use crate::storage::disk_storage::{super_block::SuperBlock};
+use crate::storage::disk_storage::wal::{WalTransaction, FileId};
 
 const NUMBER_OF_LINKED_LIST: u64 = 7;
 
@@ -47,14 +48,42 @@ pub fn find_index(size: &u64) -> u64{
 ///    the block is large enough (because it strictly will be).
 /// 3. Memory underflow/corruption is avoided because non-power-of-2 blocks are never created.
 pub struct AllocatedStruct<'a>
-where
 {
     pub file_manager: &'a mut FileManager,
     pub super_block: &'a mut SuperBlock,
+    pub tx: Option<&'a mut WalTransaction>,
+    pub file_id: FileId,
 } 
 
 impl<'a> AllocatedStruct<'a>
 {
+    pub fn new(file_manager: &'a mut FileManager, super_block: &'a mut SuperBlock, tx: Option<&'a mut WalTransaction>, file_id: FileId) -> Self{
+        Self{ file_manager, super_block, tx, file_id}
+    }
+
+    fn get_header(&self, index: &u64) -> u64 {
+        match self.file_id {
+            FileId::Structure => self.super_block.get_ith_header_structure(index),
+            FileId::Reverse => self.super_block.get_ith_header_reverse_structure(index),
+            _ => panic!("AllocatedStruct only supports Structure and Reverse files"),
+        }
+    }
+
+    fn set_header(&mut self, index: &u64, offset: &u64) {
+        match self.file_id {
+            FileId::Structure => self.super_block.next_header_structure(index, offset),
+            FileId::Reverse => self.super_block.next_header_reverse_structure(index, offset),
+            _ => panic!("AllocatedStruct only supports Structure and Reverse files"),
+        }
+    }
+
+    fn bump_allocate(&mut self, size: &u64) -> u64 {
+        match self.file_id {
+            FileId::Structure => self.super_block.get_free_block_structure(size),
+            FileId::Reverse => self.super_block.get_free_block_reverse_structure(size),
+            _ => panic!("AllocatedStruct only supports Structure and Reverse files"),
+        }
+    }
 
     fn split_capacity_into_power_of_2s(&mut self, new_offset: &u64, new_cap: &u64){
         let mut power_of_2: [u64; 15] = [0; 15];
@@ -70,15 +99,17 @@ impl<'a> AllocatedStruct<'a>
             if *val == 1{
                 let header_index: u64 = index.min((NUMBER_OF_LINKED_LIST - 1) as usize) as u64;
 
-                let next_offset = self.super_block.get_ith_header_structure(&header_index);
+                let next_offset = self.get_header(&header_index);
                 let start_offset = new_offset + padding;
-                let end_offset = new_offset + padding + 1<<index;
-                let new_disk_edge: DiskEdge = DiskEdge::new(next_offset, 1<<index, u64::MAX);
+                
+                let chunk_size = 1u64 << (index + 7);
+                let end_offset = new_offset + padding + chunk_size;
+                let new_disk_edge: DiskEdge = DiskEdge::new(next_offset, chunk_size, u64::MAX);
 
                 self.write_disk_edges(&start_offset, &end_offset, &new_disk_edge);
-                self.super_block.next_header_structure(&header_index, &start_offset);
+                self.set_header(&header_index, &start_offset);
 
-                padding += 1<<index;
+                padding += chunk_size;
             }
         }
     }
@@ -88,7 +119,7 @@ impl<'a> AllocatedStruct<'a>
 
         let cur_disk_edge: DiskEdge = *bytemuck::from_bytes(cur_disk_edge_bytes);
         if *prev_offset == u64::MAX{
-            self.super_block.next_header_structure(&(NUMBER_OF_LINKED_LIST-1), &cur_disk_edge.weight_offset);
+            self.set_header(&(NUMBER_OF_LINKED_LIST-1), &cur_disk_edge.weight_offset);
             return;
         }
 
@@ -104,8 +135,13 @@ impl<'a> AllocatedStruct<'a>
 
 
     fn write_disk_edges(&mut self, start_offset: &u64, end_offset: &u64, disk_edge: &DiskEdge){
-        self.file_manager.writing_bytes_to_mmap(*start_offset, *start_offset+ size_of::<DiskEdge>() as u64, disk_edge.convert_into_bytes());
-        self.file_manager.writing_bytes_to_mmap(*end_offset - size_of::<DiskEdge>() as u64, *end_offset, disk_edge.convert_into_bytes());
+        if let Some(ref mut t) = self.tx {
+            t.write_bytes(self.file_id, *start_offset, disk_edge.convert_into_bytes());
+            t.write_bytes(self.file_id, *end_offset - size_of::<DiskEdge>() as u64, disk_edge.convert_into_bytes());
+        } else {
+            self.file_manager.writing_bytes_to_mmap(*start_offset, *start_offset+ size_of::<DiskEdge>() as u64, disk_edge.convert_into_bytes());
+            self.file_manager.writing_bytes_to_mmap(*end_offset - size_of::<DiskEdge>() as u64, *end_offset, disk_edge.convert_into_bytes());
+        }
     }
 
     /// Allocates a block of memory of at least `size` bytes.
@@ -117,7 +153,7 @@ impl<'a> AllocatedStruct<'a>
         let mut index: u64 = find_index(size);
 
         while index < NUMBER_OF_LINKED_LIST {
-            if self.super_block.get_ith_header_structure(&index) == u64::MAX{
+            if self.get_header(&index) == u64::MAX{
                 index+=1;
                 continue;
             }
@@ -125,20 +161,30 @@ impl<'a> AllocatedStruct<'a>
         }
         
         if index < NUMBER_OF_LINKED_LIST - 1{
-            let offset_free_memory = self.super_block.get_ith_header_structure(&index);
+            let offset_free_memory = self.get_header(&index);
 
             let disk_edge_bytes: &[u8] = self.file_manager.reading_bytes(offset_free_memory, offset_free_memory + size_of::<DiskEdge>() as u64);
 
             let disk_edge: DiskEdge = *bytemuck::from_bytes(disk_edge_bytes);
 
-            self.file_manager.zeroing_mmap(offset_free_memory, offset_free_memory + *size);
-            if disk_edge.weight_len == *size{
-                let next_offset = disk_edge.weight_offset;
+            if let Some(ref mut t) = self.tx {
+                t.zero_mmap(self.file_id, offset_free_memory, offset_free_memory + *size);
+            } else {
+                self.file_manager.zeroing_mmap(offset_free_memory, offset_free_memory + *size);
+            }
+            let next_offset = disk_edge.weight_offset;
+            self.set_header(&index, &next_offset);
 
-                self.super_block.next_header_structure(&index, &next_offset);
+            if disk_edge.weight_len == *size{
+                // Exact match, no split needed
             }else{
                 let new_offset = offset_free_memory + *size;
 
+                if disk_edge.weight_len < *size {
+                    println!("PANIC AVERTED! weight_len: {}, size: {}, disk_edge weight_offset: {}, disk_edge node: {}", disk_edge.weight_len, *size, disk_edge.weight_offset, disk_edge.node);
+                    println!("offset_free_memory: {}", offset_free_memory);
+                    println!("index: {}", index);
+                }
                 let new_cap = disk_edge.weight_len - *size;
 
                 if new_cap & (new_cap-1) == 0{
@@ -147,7 +193,7 @@ impl<'a> AllocatedStruct<'a>
                     self.write_disk_edges(&new_offset, &(new_offset + new_cap), &new_disk_edge);
                     let new_index = find_index(&new_cap);
 
-                    self.super_block.next_header_structure(&new_index, &new_offset);
+                    self.set_header(&new_index, &new_offset);
                 }else{
                     self.split_capacity_into_power_of_2s(&new_offset, &new_cap);
                 }
@@ -155,7 +201,7 @@ impl<'a> AllocatedStruct<'a>
             return offset_free_memory;
         }else if index == NUMBER_OF_LINKED_LIST - 1{
             let mut prev_offset = u64::MAX;
-            let mut cur_offset = self.super_block.get_ith_header_structure(&index);
+            let mut cur_offset = self.get_header(&index);
 
             while cur_offset != u64::MAX{
                 let cur_disk_edge_bytes = self.file_manager.reading_bytes_mut(cur_offset, cur_offset + size_of::<DiskEdge>() as u64);
@@ -164,7 +210,11 @@ impl<'a> AllocatedStruct<'a>
 
                 if cur_disk_edge.weight_len >= *size{
                     self.skip_cur(&prev_offset, &cur_offset);
-                    self.file_manager.zeroing_mmap(cur_offset, cur_offset + *size);
+                    if let Some(ref mut t) = self.tx {
+                        t.zero_mmap(self.file_id, cur_offset, cur_offset + *size);
+                    } else {
+                        self.file_manager.zeroing_mmap(cur_offset, cur_offset + *size);
+                    }
                     if cur_disk_edge.weight_len > *size{
                         let new_offset = cur_offset + *size;
                         let new_cap = cur_disk_edge.weight_len - *size;
@@ -176,7 +226,7 @@ impl<'a> AllocatedStruct<'a>
                 cur_offset = cur_disk_edge.weight_offset;
             }
         }
-        self.super_block.get_free_block_structure(size)
+        self.bump_allocate(size)
     }
 
     /// Deallocates a `DiskNode` back into the allocator's free list.
@@ -186,17 +236,25 @@ impl<'a> AllocatedStruct<'a>
     /// (128, 256, 512, etc.). This ensures it lands in the perfectly sized bucket 
     /// expected by `allocate_structure`.
     pub fn deallocater(&mut self, disk_node: &DiskNode){
-        let offset = disk_node.get_edge_offset();
-        let capacity = disk_node.get_capacity();
+        // We need to use list_edges_offset or list_reverse_edges_offset based on FileId!
+        let (offset, capacity) = match self.file_id {
+            FileId::Structure => (disk_node.get_edge_offset(), disk_node.get_capacity()),
+            FileId::Reverse => (disk_node.list_reverse_edges_offset, disk_node.reverse_capacity),
+            _ => panic!("AllocatedStruct only supports Structure and Reverse files"),
+        };
+        
+        // Prevent panics if offset is MAX (node wasn't allocated)
+        if offset == u64::MAX { return; }
+
         let end_offset = offset + capacity;
 
         let index = find_index(&capacity);
 
-        let next_offset = self.super_block.get_ith_header_structure(&index);
+        let next_offset = self.get_header(&index);
         let disk_edge = DiskEdge::new(next_offset, capacity, u64::MAX);
 
         self.write_disk_edges(&offset, &end_offset, &disk_edge);
-        self.super_block.next_header_structure(&index, &offset);
+        self.set_header(&index, &offset);
     }
 }
 
@@ -323,10 +381,7 @@ mod tests {
         write_free_block(&mut fm, 0, u64::MAX, 128);
         sb.next_header_structure(&0, &0); // bucket 0 head -> offset 0
 
-        let mut alloc = AllocatedStruct {
-            file_manager: &mut fm,
-            super_block: &mut sb,
-        };
+        let mut alloc = AllocatedStruct::new(&mut fm, &mut sb, None, FileId::Structure);
 
         let offset = alloc.allocate_structure(&128);
 
@@ -344,10 +399,7 @@ mod tests {
         write_free_block(&mut fm, 0, 256, 128);
         sb.next_header_structure(&0, &0);
 
-        let mut alloc = AllocatedStruct {
-            file_manager: &mut fm,
-            super_block: &mut sb,
-        };
+        let mut alloc = AllocatedStruct::new(&mut fm, &mut sb, None, FileId::Structure);
 
         let offset = alloc.allocate_structure(&128);
         assert_eq!(offset, 0);
@@ -364,10 +416,7 @@ mod tests {
         write_free_block(&mut fm, 0, u64::MAX, 128);
         sb.next_header_structure(&0, &0);
 
-        let mut alloc = AllocatedStruct {
-            file_manager: &mut fm,
-            super_block: &mut sb,
-        };
+        let mut alloc = AllocatedStruct::new(&mut fm, &mut sb, None, FileId::Structure);
 
         let offset = alloc.allocate_structure(&128);
         assert_eq!(offset, 0);
@@ -389,10 +438,7 @@ mod tests {
         write_free_block(&mut fm, 0, u64::MAX, 256);
         sb.next_header_structure(&1, &0);
 
-        let mut alloc = AllocatedStruct {
-            file_manager: &mut fm,
-            super_block: &mut sb,
-        };
+        let mut alloc = AllocatedStruct::new(&mut fm, &mut sb, None, FileId::Structure);
 
         // Request 128 bytes from bucket 1 (256-byte block)
         let offset = alloc.allocate_structure(&128);
@@ -416,10 +462,7 @@ mod tests {
         write_free_block(&mut fm, 0, u64::MAX, 512);
         sb.next_header_structure(&2, &0);
 
-        let mut alloc = AllocatedStruct {
-            file_manager: &mut fm,
-            super_block: &mut sb,
-        };
+        let mut alloc = AllocatedStruct::new(&mut fm, &mut sb, None, FileId::Structure);
 
         let offset = alloc.allocate_structure(&128);
         assert_eq!(offset, 0);
@@ -445,10 +488,7 @@ mod tests {
         sb.next_header_structure(&1, &0);
         // bucket 0 stays at u64::MAX (empty)
 
-        let mut alloc = AllocatedStruct {
-            file_manager: &mut fm,
-            super_block: &mut sb,
-        };
+        let mut alloc = AllocatedStruct::new(&mut fm, &mut sb, None, FileId::Structure);
 
         // Request 128 bytes — bucket 0 is empty, should promote to bucket 1
         let offset = alloc.allocate_structure(&128);
@@ -471,10 +511,7 @@ mod tests {
         write_free_block(&mut fm, 0, u64::MAX, block_size);
         sb.next_header_structure(&6, &0);
 
-        let mut alloc = AllocatedStruct {
-            file_manager: &mut fm,
-            super_block: &mut sb,
-        };
+        let mut alloc = AllocatedStruct::new(&mut fm, &mut sb, None, FileId::Structure);
 
         let offset = alloc.allocate_structure(&block_size);
         assert_eq!(offset, 0);
@@ -491,10 +528,7 @@ mod tests {
         write_free_block(&mut fm, 0, u64::MAX, block_size);
         sb.next_header_structure(&6, &0);
 
-        let mut alloc = AllocatedStruct {
-            file_manager: &mut fm,
-            super_block: &mut sb,
-        };
+        let mut alloc = AllocatedStruct::new(&mut fm, &mut sb, None, FileId::Structure);
 
         let offset = alloc.allocate_structure(&request_size);
         assert_eq!(offset, 0);
@@ -516,10 +550,7 @@ mod tests {
         write_free_block(&mut fm, 0, 16384, 8192);
         sb.next_header_structure(&6, &0);
 
-        let mut alloc = AllocatedStruct {
-            file_manager: &mut fm,
-            super_block: &mut sb,
-        };
+        let mut alloc = AllocatedStruct::new(&mut fm, &mut sb, None, FileId::Structure);
 
         // Request 16384 bytes — first block (8192) is too small, should skip to second
         let offset = alloc.allocate_structure(&16384);
@@ -537,20 +568,14 @@ mod tests {
         // next_structure_free_block starts at 0
 
         let offset = {
-            let mut alloc = AllocatedStruct {
-                file_manager: &mut fm,
-                super_block: &mut sb,
-            };
+            let mut alloc = AllocatedStruct::new(&mut fm, &mut sb, None, FileId::Structure);
             alloc.allocate_structure(&256)
         };
         assert_eq!(offset, 0); // bump starts at 0
         assert_eq!(sb.next_structure_free_block, 256); // advanced by size
 
         let offset2 = {
-            let mut alloc = AllocatedStruct {
-                file_manager: &mut fm,
-                super_block: &mut sb,
-            };
+            let mut alloc = AllocatedStruct::new(&mut fm, &mut sb, None, FileId::Structure);
             alloc.allocate_structure(&128)
         };
         assert_eq!(offset2, 256); // next bump
@@ -565,10 +590,7 @@ mod tests {
         write_free_block(&mut fm, 0, u64::MAX, 8192);
         sb.next_header_structure(&6, &0);
 
-        let mut alloc = AllocatedStruct {
-            file_manager: &mut fm,
-            super_block: &mut sb,
-        };
+        let mut alloc = AllocatedStruct::new(&mut fm, &mut sb, None, FileId::Structure);
 
         // Request 32768 — only block in bucket 6 is 8192, too small
         let offset = alloc.allocate_structure(&32768);
@@ -591,10 +613,7 @@ mod tests {
         write_free_block(&mut fm, 0, 256, 128);
         sb.next_header_structure(&0, &0);
 
-        let mut alloc = AllocatedStruct {
-            file_manager: &mut fm,
-            super_block: &mut sb,
-        };
+        let mut alloc = AllocatedStruct::new(&mut fm, &mut sb, None, FileId::Structure);
 
         let o1 = alloc.allocate_structure(&128);
         let o2 = alloc.allocate_structure(&128);
@@ -613,10 +632,7 @@ mod tests {
         let (mut fm, mut sb, _tmp) = setup();
 
         // Use bump allocation to test non-overlap
-        let mut alloc = AllocatedStruct {
-            file_manager: &mut fm,
-            super_block: &mut sb,
-        };
+        let mut alloc = AllocatedStruct::new(&mut fm, &mut sb, None, FileId::Structure);
 
         let o1 = alloc.allocate_structure(&256);
         let o2 = alloc.allocate_structure(&512);
@@ -634,10 +650,7 @@ mod tests {
     #[test]
     fn test_strict_doubling_invariant() {
         let (mut fm, mut sb, _tmp) = setup();
-        let mut alloc = AllocatedStruct {
-            file_manager: &mut fm,
-            super_block: &mut sb,
-        };
+        let mut alloc = AllocatedStruct::new(&mut fm, &mut sb, None, FileId::Structure);
 
         // We simulate the database behavior where sizes strictly double: 
         // 128, 256, 512, 1024, 2048, 4096

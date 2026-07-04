@@ -2,8 +2,10 @@ use std::marker::PhantomData;
 use std::path::Path;
 
 use crate::GraphErrors;
+use crate::storage::disk_storage::allocater::AllocatedStruct;
 use crate::storage::disk_storage::disk_edge_iterator::DiskEdgeIterator;
 use crate::storage::disk_storage::disk_edge_iterator::DiskReverseEdgeIterator;
+use crate::storage::disk_storage::disk_node::DISK_NODE_INITIAL_CAPACITY;
 use crate::storage::disk_storage::from_disk_bytes::FromDiskBytes;
 use crate::storage::disk_storage::super_block::SuperBlock;
 use crate::storage::disk_storage::disk_edge::DiskEdge;
@@ -17,7 +19,10 @@ const SUPER_BLOCK_SIZE: usize = 1024;
 
 fn resizing_disk_node(file_manager: &mut FileManager, super_block: &mut SuperBlock, disk_node: &mut DiskNode, mut tx: Option<&mut WalTransaction>) -> Result<(), std::io::Error>{
     disk_node.capacity *= 2;
-    let free_offset = super_block.get_free_block_structure(&disk_node.capacity);
+    let free_offset = {
+        let mut alloc = AllocatedStruct::new(file_manager, super_block, tx.as_deref_mut(), FileId::Structure);
+        alloc.allocate_structure(&disk_node.get_capacity())
+    };
 
     while free_offset + disk_node.capacity > file_manager.file_len()?{
         if let Some(ref mut t) = tx { t.increase_file_size(FileId::Structure); }
@@ -26,10 +31,17 @@ fn resizing_disk_node(file_manager: &mut FileManager, super_block: &mut SuperBlo
     let edge_offset= disk_node.list_edges_offset;
     let edge_offset_end = edge_offset + (disk_node.number_of_edges * size_of::<DiskEdge>() as u64);
 
-    if let Some(t) = tx {
+    if let Some(t) = tx.as_deref_mut() {
         t.copy_within(FileId::Structure, edge_offset, edge_offset_end, free_offset);
     } else {
         file_manager.copy_within(edge_offset, edge_offset_end, free_offset);
+    }
+    {
+        let mut alloc = AllocatedStruct::new(file_manager, super_block, tx, FileId::Structure);
+        let mut old_node = *disk_node;
+        old_node.list_edges_offset = edge_offset;
+        old_node.capacity /= 2;
+        alloc.deallocater(&old_node);
     }
     disk_node.list_edges_offset = free_offset;
 
@@ -39,7 +51,10 @@ fn resizing_disk_node(file_manager: &mut FileManager, super_block: &mut SuperBlo
 pub fn resizing_disk_node_reverse(file_manager: &mut FileManager, super_block: &mut SuperBlock, disk_node: &mut DiskNode, mut tx: Option<&mut WalTransaction>) -> Result<(), std::io::Error>{
     let old_offset = disk_node.list_reverse_edges_offset;
     disk_node.reverse_capacity *= 2;
-    let free_offset = super_block.get_free_block_reverse_structure(&disk_node.reverse_capacity);
+    let free_offset = {
+        let mut alloc = AllocatedStruct::new(file_manager, super_block, tx.as_deref_mut(), FileId::Reverse);
+        alloc.allocate_structure(&disk_node.reverse_capacity)
+    };
 
     while free_offset + disk_node.reverse_capacity > file_manager.file_len().unwrap() {
         if let Some(ref mut t) = tx { t.increase_file_size(FileId::Reverse); }
@@ -47,10 +62,18 @@ pub fn resizing_disk_node_reverse(file_manager: &mut FileManager, super_block: &
     }
 
     let src_end = old_offset + (disk_node.number_of_reverse_edges * size_of::<u64>() as u64);
-    if let Some(t) = tx {
+    if let Some(t) = tx.as_deref_mut() {
         t.copy_within(FileId::Reverse, old_offset, src_end, free_offset);
     } else {
         file_manager.copy_within(old_offset, src_end, free_offset);
+    }
+
+    {
+        let mut alloc = AllocatedStruct::new(file_manager, super_block, tx, FileId::Reverse);
+        let mut old_node = *disk_node;
+        old_node.list_reverse_edges_offset = old_offset;
+        old_node.reverse_capacity /= 2;
+        alloc.deallocater(&old_node);
     }
     disk_node.list_reverse_edges_offset = free_offset;
     Ok(())
@@ -316,28 +339,58 @@ where
     /// # Panics
     /// Panics if the edge region exceeds the structure memory map bounds.
     pub fn remove_edges_from_node(&mut self, disk_node: &mut DiskNode, mut tx: Option<&mut WalTransaction>)-> Result<(), std::io::Error>{
-        if disk_node.number_of_edges == 0{
-            return Ok(());
-        }
-        let number_of_edges = disk_node.get_number_of_edges();
-        let edges_offset = disk_node.get_edge_offset();
-
-        let start = edges_offset;
-        let number_of_bytes = number_of_edges * size_of::<DiskEdge>() as u64;
-        let end = start + number_of_bytes;
-
-        if let Some(ref mut t) = tx {
-            t.zero_mmap(FileId::Structure, start, end);
-        } else {
-            self.file_manager_edge_structure.zeroing_mmap(start, end);
-        }
-
         let mut super_block = self.get_super_block();
-        super_block.edge_count -= disk_node.number_of_edges;
-        self.write_superblock(&super_block, tx.as_deref_mut());
+        let mut node_changed = false;
 
-        disk_node.number_of_edges = 0;
-        self.write_disk_node(disk_node, tx)?;
+        if disk_node.number_of_edges > 0 {
+            let start = disk_node.get_edge_offset();
+            let end = start + (disk_node.number_of_edges * size_of::<DiskEdge>() as u64);
+
+            if let Some(ref mut t) = tx {
+                t.zero_mmap(FileId::Structure, start, end);
+            } else {
+                self.file_manager_edge_structure.zeroing_mmap(start, end);
+            }
+
+            super_block.edge_count -= disk_node.number_of_edges;
+            
+            {
+                let mut alloc = AllocatedStruct::new(&mut self.file_manager_edge_structure, &mut super_block, tx.as_deref_mut(), FileId::Structure);
+                alloc.deallocater(disk_node);
+            }
+
+            disk_node.number_of_edges = 0;
+            disk_node.list_edges_offset = u64::MAX;
+            disk_node.capacity = DISK_NODE_INITIAL_CAPACITY;
+            node_changed = true;
+        }
+
+        if disk_node.number_of_reverse_edges > 0 {
+            let start = disk_node.list_reverse_edges_offset;
+            let end = start + (disk_node.number_of_reverse_edges * size_of::<u64>() as u64);
+
+            if let Some(ref mut t) = tx {
+                t.zero_mmap(FileId::Reverse, start, end);
+            } else {
+                self.file_manager_reverse_edge.zeroing_mmap(start, end);
+            }
+
+            {
+                let mut alloc = AllocatedStruct::new(&mut self.file_manager_reverse_edge, &mut super_block, tx.as_deref_mut(), FileId::Reverse);
+                alloc.deallocater(disk_node);
+            }
+
+            disk_node.number_of_reverse_edges = 0;
+            disk_node.list_reverse_edges_offset = u64::MAX;
+            disk_node.reverse_capacity = DISK_NODE_INITIAL_CAPACITY;
+            node_changed = true;
+        }
+
+        if node_changed {
+            self.write_superblock(&super_block, tx.as_deref_mut());
+            self.write_disk_node(disk_node, tx)?;
+        }
+        
         Ok(())
     }
 
@@ -458,7 +511,10 @@ where
         let mut superblock = self.get_super_block();
 
         if disk_node.list_edges_offset == u64::MAX{
-            disk_node.list_edges_offset = superblock.get_free_block_structure(&disk_node.capacity);
+            disk_node.list_edges_offset = {
+                let mut alloc = AllocatedStruct::new(&mut self.file_manager_edge_structure, &mut superblock, Some(&mut tx), FileId::Structure);
+                alloc.allocate_structure(&DISK_NODE_INITIAL_CAPACITY)
+            };
 
             while disk_node.list_edges_offset + disk_node.capacity > self.file_manager_edge_structure.file_len().unwrap(){
                 tx.increase_file_size(FileId::Structure);
@@ -580,7 +636,10 @@ where
 
         // First-time initialization: allocate a reverse edge block for this node
         if disk_node.list_reverse_edges_offset == u64::MAX {
-            disk_node.list_reverse_edges_offset = superblock.get_free_block_reverse_structure(&disk_node.reverse_capacity);
+            disk_node.list_reverse_edges_offset = {
+                let mut alloc = AllocatedStruct::new(&mut self.file_manager_reverse_edge, &mut superblock, Some(&mut tx), FileId::Reverse);
+                alloc.allocate_structure(&DISK_NODE_INITIAL_CAPACITY)
+            };
 
             while disk_node.list_reverse_edges_offset + disk_node.reverse_capacity > self.file_manager_reverse_edge.file_len().unwrap() {
                 tx.increase_file_size(FileId::Reverse);

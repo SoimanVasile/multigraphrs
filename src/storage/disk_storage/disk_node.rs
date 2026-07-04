@@ -2,7 +2,7 @@ use bytemuck::Pod;
 use bytemuck::Zeroable;
 use crate::storage::disk_storage::disk_edge::DiskEdge;
 
-const DISK_NODE_INITIAL_CAPACITY: u64= 256;
+pub const DISK_NODE_INITIAL_CAPACITY: u64= 128;
 
 /// On-disk representation of a graph node.
 ///

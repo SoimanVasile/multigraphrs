@@ -182,5 +182,9 @@ impl SuperBlock {
     pub fn next_header_structure(&mut self, index: &u64, next_id: &u64){
         self.header_structure[*index as usize] = *next_id;
     }
+
+    pub fn next_header_reverse_structure(&mut self, index: &u64, next_id: &u64){
+        self.header_reverse_structure[*index as usize] = *next_id;
+    }
         
 }
