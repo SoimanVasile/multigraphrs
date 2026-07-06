@@ -123,6 +123,32 @@ where
 
     }
 
+    pub fn bulk_add_node(&mut self, sources: &[K]) -> Result<(), GraphErrors>{
+        if sources.is_empty() {
+            return Ok(());
+        }
+
+        for source in sources{
+            if self.hashed_nodes.contains_key(source){
+                return Err(GraphErrors::NodeAlreadyExists);
+            }
+        }
+        let node_id = self.adjacency_list.bulk_add_node(&(sources.len() as u64));
+
+        let max = node_id.iter().max().unwrap();
+        if *max >= self.reversed_hashed_nodes.len() as u64{
+            self.reversed_hashed_nodes.resize(*max as usize + 1, None);
+        }
+        for (index, source) in sources.iter().enumerate(){
+            let id = node_id[index];
+            self.hashed_nodes.insert(source.clone(), id);
+            self.reversed_hashed_nodes[id as usize] = Some(source.clone());
+        }
+
+        
+        Ok(())
+    }
+
     /// Removes a node and all edges connected to it from the graph.
     ///
     /// The strategy `S` determines how incoming and outgoing edges are cleaned
@@ -441,6 +467,36 @@ where
         let edge = Directed::add_edge(&mut self.adjacency_list, *source_hashed, *target_hashed, &1)?;
         
         Ok(EdgeView::new(self.reversed_hashed_nodes[edge.get_target() as usize].as_ref().unwrap(), &edge.get_weight()))
+    }
+
+    pub fn bulk_add_edge(&mut self, edges: &[(K, K)]) -> Result<(), GraphErrors>{
+
+        let mut hashed_edges: Vec<(u64, u64, u32)> = Vec::with_capacity(100000);
+
+        for (source, target) in edges{
+
+            if hashed_edges.len() >= 100000{
+                Directed::bulk_add_edge(&mut self.adjacency_list, &hashed_edges);
+                hashed_edges.clear();
+            }
+            
+            let source_hashed = match self.hashed_nodes.get(&source){
+                Some(t) => t,
+                None => return Err(GraphErrors::NodeNotFound),
+            };
+
+            let target_hashed = match self.hashed_nodes.get(&target){
+                Some(t) => t,
+                None => return Err(GraphErrors::NodeNotFound),
+            };
+
+            hashed_edges.push((*source_hashed, *target_hashed, 1u32));
+        }
+
+        if hashed_edges.len() != 0{
+            Directed::bulk_add_edge(&mut self.adjacency_list, &hashed_edges);
+        }
+        Ok(())
     }
 
     /// Removes an unweighted, directed edge from `source` to `target`.

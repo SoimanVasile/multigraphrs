@@ -64,6 +64,10 @@ where
         self.adjacency_list[*node as usize].push(edge.clone())
     }
 
+    fn bulk_add_edge_to_node(&mut self, edges: &[(u64, Edge<W>)]) -> Result<(), std::io::Error> {
+        unimplemented!()
+    }
+
     fn add_node(&mut self) -> u64{
 
         self.number_of_nodes+=1;
@@ -77,6 +81,14 @@ where
         let id = self.removed_ids.pop_front().unwrap();
 
         id
+    }
+
+    fn bulk_add_node(&mut self, number_of_nodes: &u64) -> Vec<u64> {
+        let mut ids = Vec::with_capacity(*number_of_nodes as usize);
+        for _ in 0..*number_of_nodes {
+            ids.push(self.add_node());
+        }
+        ids
     }
 
     fn node_len(&self, node: &u64) -> usize{
@@ -139,6 +151,12 @@ where
 
     fn add_reverse_edge(&mut self, source: &u64, origin: &u64) {
         self.reverse_adjacency_list[*source as usize].push(*origin);
+    }
+
+    fn bulk_add_reverse_edge(&mut self, edges: &[(u64, u64, W)]) {
+        for (source, target, _) in edges{
+            self.reverse_adjacency_list[*target as usize].push(*source);
+        }
     }
 
     fn get_reverse_edges(&self, node: &u64) -> Vec<u64> {

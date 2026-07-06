@@ -37,6 +37,19 @@ where
         Ok(edge)
     }
 
+    fn bulk_add_edge(graph: &mut impl StorageBackend<W>, hashed_nodes: &[(u64, u64, W)]) -> Result<(), GraphErrors> {
+        let mut edges: Vec<(u64, Edge<W>)> = Vec::with_capacity(hashed_nodes.len());
+
+        for (source, target, weight) in hashed_nodes{
+            let edge = Edge::new(*target, weight);
+            edges.push((*source, edge));
+        }
+
+        graph.bulk_add_edge_to_node(&edges);
+
+        Ok(())
+    }
+
     /// Removes a single directed, weighted edge from `source` to `target`
     /// matching both target identity **and** weight equality.
     ///

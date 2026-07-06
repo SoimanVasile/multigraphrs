@@ -19,11 +19,15 @@ where
     /// Panics if `node` is out of bounds of the internal storage.
     fn add_edge_to_node(&mut self, node: &u64, edge: &Edge<W>);
 
+    fn bulk_add_edge_to_node(&mut self, edges: &[(u64, Edge<W>)]) -> Result<(), std::io::Error>;
+
     /// Creates a new, empty node slot. Increments the node counter.
     ///
     /// # Panics
     /// This method does not panic under normal circumstances.
     fn add_node(&mut self) -> u64;
+
+    fn bulk_add_node(&mut self, number_of_noes: &u64) -> Vec<u64>;
 
     /// Returns the number of outgoing edges for `node` (**copy**, `usize` is `Copy`).
     ///
@@ -95,6 +99,8 @@ where
 
     /// Records that `source` has an incoming edge from `origin` (reverse index).
     fn add_reverse_edge(&mut self, source: &u64, origin: &u64);
+
+    fn bulk_add_reverse_edge(&mut self, edges: &[(u64, u64, W)]);
 
     /// Returns all node IDs that have outgoing edges pointing to `node`.
     fn get_reverse_edges(&self, node: &u64) -> Vec<u64>;

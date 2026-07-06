@@ -35,6 +35,18 @@ impl DirectionStrategy<u32> for Directed
         // Returns the single edge that was created
         Ok(edge) }
 
+    fn bulk_add_edge(graph: &mut impl StorageBackend<u32>, hashed_nodes: &[(u64, u64, u32)]) -> Result<(), GraphErrors> {
+        let mut edges: Vec<(u64, Edge<u32>)> = Vec::with_capacity(hashed_nodes.len());
+        for (source, target, weight) in hashed_nodes{
+            let edge = Edge::new(*target, weight);
+            edges.push((*source, edge));
+        }
+        graph.bulk_add_edge_to_node(&edges);
+        graph.bulk_add_reverse_edge(&hashed_nodes);
+
+        Ok(())
+    }
+
     /// Removes a single directed edge from `source` to `target`.
     ///
     /// Matching is performed by target identity only (ignores weight for

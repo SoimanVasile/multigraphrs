@@ -107,4 +107,8 @@ impl FileManager{
         // This avoids making a statx syscall to the OS.
         Ok(self.mmap.len() as u64)
     }
+
+    pub fn flush(&self) -> Result<(), std::io::Error> {
+        self.mmap.flush()
+    }
 }

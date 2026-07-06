@@ -14,6 +14,8 @@ where
     /// Returns the edges that were successfully created.
     fn add_edge(graph: &mut impl StorageBackend<W>, source: u64, target: u64, weight: &W) -> Result<Edge<W>, GraphErrors>;
 
+    fn bulk_add_edge(graph: &mut impl StorageBackend<W>, hashed_nodes: &[(u64, u64, W)]) -> Result<(), GraphErrors>;
+
     /// Removes an edge from `source` to `target` with the given `weight`,
     /// using strategy-specific matching and cleanup logic.
     ///
