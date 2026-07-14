@@ -4,6 +4,9 @@
 pub trait FromDiskBytes {
     /// Constructs an **owned** instance from the given byte slice.
     ///
+    /// # Errors
+    /// None.
+    ///
     /// # Panics
     /// May panic if the byte slice length does not match the expected size
     /// for the target type.
@@ -13,6 +16,9 @@ pub trait FromDiskBytes {
 /// `FromDiskBytes` implementation for `String`.
 ///
 /// Interprets the byte slice as UTF-8 and returns an **owned** `String`.
+///
+/// # Errors
+/// None.
 ///
 /// # Panics
 /// Panics (via `unwrap`) if the bytes are not valid UTF-8.
@@ -26,6 +32,13 @@ macro_rules! impl_from_disk_bytes_numeric {
     ($($t:ty),*) => {
         $(
             impl FromDiskBytes for $t {
+                /// Deserializes a numeric type from disk bytes.
+                ///
+                /// # Errors
+                /// None.
+                ///
+                /// # Panics
+                /// Panics if the byte slice length does not match the expected size.
                 fn from_bytes(bytes: &[u8]) -> Self {
                     let arr = bytes
                         .try_into()

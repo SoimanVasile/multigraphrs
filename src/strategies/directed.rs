@@ -19,6 +19,9 @@ impl DirectionStrategy<u32> for Directed
     /// # Errors
     /// Returns `GraphErrors::NodeNotFound` if the `source` or `target` node 
     /// is missing from the graph's adjacency list.
+    ///
+    /// # Side Effects
+    /// Mutates the `graph` storage backend by adding the forward edge and updating the reverse index.
     fn add_edge(
         graph: &mut impl StorageBackend<u32>,
         source: u64, 
@@ -35,6 +38,13 @@ impl DirectionStrategy<u32> for Directed
         // Returns the single edge that was created
         Ok(edge) }
 
+    /// Adds multiple unweighted directed edges to the graph efficiently in bulk.
+    ///
+    /// # Errors
+    /// Returns a `GraphErrors` if the underlying storage operations fail.
+    ///
+    /// # Side Effects
+    /// Mutates the `graph` storage backend to add the given directed edges in bulk.
     fn bulk_add_edge(graph: &mut impl StorageBackend<u32>, hashed_nodes: &[(u64, u64, u32)]) -> Result<(), GraphErrors> {
         let mut edges: Vec<(u64, Edge<u32>)> = Vec::with_capacity(hashed_nodes.len());
         for (source, target, weight) in hashed_nodes{
@@ -45,6 +55,19 @@ impl DirectionStrategy<u32> for Directed
         graph.bulk_add_reverse_edge(&hashed_nodes);
 
         Ok(())
+    }
+
+    fn bulk_remove_edge(graph: &mut impl StorageBackend<u32>, edges: &[(u64, u64, u32)]) {
+        let mut edges_to_remove: Vec<(u64, Edge<u32>)> = Vec::with_capacity(edges.len());
+        let mut reverse_edges_to_remove: Vec<(u64, u64)> = Vec::with_capacity(edges.len());
+        
+        for (source, target, weight) in edges {
+            edges_to_remove.push((*source, Edge::new(*target, weight)));
+            reverse_edges_to_remove.push((*target, *source));
+        }
+        
+        graph.bulk_remove_edge(&edges_to_remove);
+        graph.bulk_remove_reverse_edge(&reverse_edges_to_remove);
     }
 
     /// Removes a single directed edge from `source` to `target`.
@@ -60,11 +83,12 @@ impl DirectionStrategy<u32> for Directed
     ///
     /// # Panics
     /// Panics if `source` is out of bounds in the storage backend.
+    ///
+    /// # Side Effects
+    /// Mutates the `graph` storage backend by removing the specified edge and updating the reverse index.
     fn remove_edge(graph: &mut impl StorageBackend<u32>, source: u64, target: u64, weight: &u32 ) -> Result<Edge<u32>, GraphErrors> {
         let edge = Edge::new(target, weight);
-        let result = graph.remove_edge(&source, &edge, |edge_1: &Edge<u32>, edge_2: &Edge<u32>| -> bool {
-            edge_1.get_target() == edge_2.get_target()
-        })?;
+        let result = graph.remove_edge(&source, &edge)?;
 
         // Update reverse index: target no longer has this incoming edge from source
         graph.remove_reverse_edge(&target, &source);
@@ -76,6 +100,10 @@ impl DirectionStrategy<u32> for Directed
     ///
     /// Uses the reverse adjacency list to efficiently find and remove all
     /// incoming edges without scanning the entire graph.
+    ///
+    /// # Side Effects
+    /// Mutates the `graph` storage backend by clearing reverse and forward edges for the node,
+    /// and freeing the `node_id`.
     fn remove_node(graph: &mut impl StorageBackend<u32>, node_id: u64) {
         // 1. Remove incoming edges: use reverse list to find who points to us
         let incoming = graph.get_reverse_edges(&node_id);

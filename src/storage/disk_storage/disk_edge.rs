@@ -22,8 +22,9 @@ impl DiskEdge{
     ///
     /// All arguments are **copied** (all are `u64`, which is `Copy`).
     ///
-    /// # Panics
-    /// This method does not panic.
+    /// # Errors
+    /// None.
+    ///
     pub fn new(weight_offset: u64, weight_len: u64, node: u64) -> DiskEdge{
         DiskEdge { weight_offset, weight_len, node}
     }
@@ -38,8 +39,9 @@ impl DiskEdge{
     /// Uses `unsafe` pointer casting. This is sound because `DiskEdge` is
     /// `#[repr(C)]` and derives `Pod`.
     ///
-    /// # Panics
-    /// This method does not panic.
+    /// # Errors
+    /// None.
+    ///
     pub fn convert_into_bytes(&self) -> &[u8]{
         unsafe{
             std::slice::from_raw_parts(

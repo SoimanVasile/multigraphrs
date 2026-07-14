@@ -12,6 +12,10 @@ pub enum FileId {
 }
 
 impl FileId {
+    /// Converts a `u8` value into an `Option<FileId>`.
+    ///
+    /// # Errors
+    /// Returns `None` if the provided value does not correspond to a valid `FileId`.
     pub fn from_u8(val: u8) -> Option<Self> {
         match val {
             0 => Some(FileId::Node),
@@ -32,6 +36,10 @@ pub enum WalRecord {
 }
 
 impl WalRecord {
+    /// Retrieves the `FileId` associated with this `WalRecord`.
+    ///
+    /// # Errors
+    /// This method does not return an error.
     pub fn file_id(&self) -> FileId {
         match self {
             WalRecord::Write { file_id, .. } => *file_id,
@@ -48,10 +56,21 @@ pub struct WalTransaction {
 }
 
 impl WalTransaction {
+    /// Creates a new, empty `WalTransaction`.
+    ///
+    /// # Errors
+    /// This method does not return an error.
     pub fn new() -> Self {
         Self { records: Vec::new() }
     }
 
+    /// Adds a `Write` record to the transaction.
+    ///
+    /// # Side Effects
+    /// Modifies the `records` vector by appending a new record.
+    ///
+    /// # Errors
+    /// This method does not return an error.
     pub fn write_bytes(&mut self, file_id: FileId, offset: u64, bytes: &[u8]) {
         self.records.push(WalRecord::Write {
             file_id,
@@ -60,18 +79,43 @@ impl WalTransaction {
         });
     }
 
+    /// Adds a `Zero` record to the transaction.
+    ///
+    /// # Side Effects
+    /// Modifies the `records` vector by appending a new record.
+    ///
+    /// # Errors
+    /// This method does not return an error.
     pub fn zero_mmap(&mut self, file_id: FileId, offset: u64, end: u64) {
         self.records.push(WalRecord::Zero { file_id, offset, end });
     }
 
+    /// Adds a `CopyWithin` record to the transaction.
+    ///
+    /// # Side Effects
+    /// Modifies the `records` vector by appending a new record.
+    ///
+    /// # Errors
+    /// This method does not return an error.
     pub fn copy_within(&mut self, file_id: FileId, src_start: u64, src_end: u64, dest_start: u64) {
         self.records.push(WalRecord::CopyWithin { file_id, src_start, src_end, dest_start });
     }
 
+    /// Adds an `IncreaseFileSize` record to the transaction.
+    ///
+    /// # Side Effects
+    /// Modifies the `records` vector by appending a new record.
+    ///
+    /// # Errors
+    /// This method does not return an error.
     pub fn increase_file_size(&mut self, file_id: FileId) {
         self.records.push(WalRecord::IncreaseFileSize { file_id });
     }
 
+    /// Calculates the checksum for a given payload.
+    ///
+    /// # Errors
+    /// This method does not return an error.
     fn calculate_checksum(payload: &[u8]) -> u32 {
         let mut sum = 0u32;
         for &b in payload {
@@ -80,6 +124,13 @@ impl WalTransaction {
         sum
     }
 
+    /// Serializes the transaction into a byte vector.
+    ///
+    /// # Side Effects
+    /// Allocates memory for the returned byte vector.
+    ///
+    /// # Errors
+    /// This method does not return an error.
     pub fn serialize(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         buf.extend_from_slice(b"WALT");
@@ -121,6 +172,13 @@ impl WalTransaction {
         buf
     }
 
+    /// Deserializes all transactions from the given file.
+    ///
+    /// # Side Effects
+    /// Reads from the provided file and modifies its internal cursor.
+    ///
+    /// # Errors
+    /// Returns an `std::io::Error` if reading from the file fails.
     pub fn deserialize_all(file: &mut File) -> Result<Vec<WalTransaction>, std::io::Error> {
         file.rewind()?;
         let mut transactions = Vec::new();
@@ -222,6 +280,13 @@ pub struct WalManager {
 }
 
 impl WalManager {
+    /// Creates a new `WalManager` for the given path.
+    ///
+    /// # Side Effects
+    /// Opens or creates a file at the specified path on disk.
+    ///
+    /// # Errors
+    /// Returns an `std::io::Error` if the file cannot be opened or created.
     pub fn new(path: PathBuf) -> Result<Self, std::io::Error> {
         let file = OpenOptions::new()
             .read(true)
@@ -232,6 +297,13 @@ impl WalManager {
         Ok(Self { file })
     }
 
+    /// Commits the given transaction to the write-ahead log.
+    ///
+    /// # Side Effects
+    /// Writes data to the underlying file and syncs it to disk.
+    ///
+    /// # Errors
+    /// Returns an `std::io::Error` if writing or syncing to disk fails.
     pub fn commit(&mut self, tx: &WalTransaction) -> Result<(), std::io::Error> {
         let bytes = tx.serialize();
         self.file.write_all(&bytes)?;
@@ -239,6 +311,13 @@ impl WalManager {
         Ok(())
     }
 
+    /// Replays all transactions in the write-ahead log against the given file managers.
+    ///
+    /// # Side Effects
+    /// Reads from the WAL file, applies changes to the file managers, flushes them, and truncates the WAL file.
+    ///
+    /// # Errors
+    /// Returns an `std::io::Error` if any read, write, flush, or truncate operation fails.
     pub fn replay(
         &mut self,
         file_node: &mut FileManager,

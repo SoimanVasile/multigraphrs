@@ -12,6 +12,13 @@ pub enum GraphErrors {
 }
 
 impl fmt::Display for GraphErrors {
+    /// Formats the error for display.
+    ///
+    /// # Side Effects
+    /// Writes the formatted string to the provided formatter `f`.
+    ///
+    /// # Errors
+    /// Returns a `fmt::Result` which may contain a formatting error from the underlying writer.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             GraphErrors::NodeNotFound => write!(f, "Node not found in the graph"),

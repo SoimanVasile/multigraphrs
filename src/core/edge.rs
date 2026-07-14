@@ -20,6 +20,9 @@ where
     W: Clone + std::cmp::PartialEq,
 {
     /// Constructs a new `Edge`.
+    ///
+    /// # Errors
+    /// This function does not return an error.
     pub fn new(target: u64, weight: &W) -> Edge<W> {
         Edge { target, weight: weight.clone()}
     }
@@ -29,8 +32,8 @@ where
     /// # Returns
     /// A **copy** of the `target` field (`u64` is `Copy`).
     ///
-    /// # Panics
-    /// This method does not panic.
+    /// # Errors
+    /// This function does not return an error.
     pub fn get_target(&self) -> u64 {
         self.target
     }
@@ -41,8 +44,8 @@ where
     /// A **clone** of the stored weight. The caller receives an owned copy;
     /// mutations to it will **not** affect the original edge.
     ///
-    /// # Panics
-    /// This method does not panic (assuming `W::clone()` does not panic).
+    /// # Errors
+    /// This function does not return an error.
     pub fn get_weight(&self) -> W{
         self.weight.clone()
     }
@@ -57,8 +60,8 @@ where
     /// Uses `unsafe` pointer casting internally. This is sound only when `W`
     /// is a plain-old-data type with no padding bytes that carry meaning.
     ///
-    /// # Panics
-    /// This method does not panic.
+    /// # Errors
+    /// This function does not return an error.
     pub fn convert_to_bytes(&self) -> &[u8]{
         unsafe{
         std::slice::from_raw_parts(
@@ -88,8 +91,8 @@ where
     /// The returned struct owns independent copies of both values;
     /// mutating them will **not** affect the original graph data.
     ///
-    /// # Panics
-    /// This method does not panic (assuming `K::clone()` and `W::clone()` do not panic).
+    /// # Errors
+    /// This function does not return an error.
     pub fn new(target: &K, weight: &W) -> EdgeView<K, W>{
         EdgeView { target: target.clone(), weight: weight.clone() }
     }
@@ -97,8 +100,8 @@ where
     ///
     /// The reference borrows from `self`; no clone is performed.
     ///
-    /// # Panics
-    /// This method does not panic.
+    /// # Errors
+    /// This function does not return an error.
     pub fn get_target(&self) -> &K{
         &self.target
     }
@@ -106,8 +109,8 @@ where
     ///
     /// The reference borrows from `self`; no clone is performed.
     ///
-    /// # Panics
-    /// This method does not panic.
+    /// # Errors
+    /// This function does not return an error.
     pub fn get_weight(&self) -> &W{
         &self.weight
     }

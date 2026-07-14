@@ -34,8 +34,8 @@ impl DiskNode{
     /// All arguments are **copied** (`u64` is `Copy`). Pass `u64::MAX` for
     /// the offset parameters to indicate an uninitialized node.
     ///
-    /// # Panics
-    /// This method does not panic.
+    /// # Errors
+    /// This method does not return an error.
     pub fn new(node_idx: u64, list_edges_offset: u64,list_reverse_edges_offset: u64) -> Self{
         Self { node_idx, list_edges_offset, number_of_edges: 0, list_reverse_edges_offset, number_of_reverse_edges: 0, capacity: DISK_NODE_INITIAL_CAPACITY, reverse_capacity: DISK_NODE_INITIAL_CAPACITY}   
     }
@@ -44,12 +44,16 @@ impl DiskNode{
     /// # Returns
     /// A **copy** of `list_edges_offset` (`u64` is `Copy`).
     ///
-    /// # Panics
-    /// This method does not panic.
+    /// # Errors
+    /// This method does not return an error.
     pub fn get_edge_offset(&self) -> u64{
         self.list_edges_offset
     }
 
+    /// Returns the capacity of the forward edge block.
+    ///
+    /// # Errors
+    /// This method does not return an error.
     pub fn get_capacity(&self) -> u64{
         self.capacity
     }
@@ -59,8 +63,8 @@ impl DiskNode{
     /// # Returns
     /// A **copy** of `number_of_edges` (`u64` is `Copy`).
     ///
-    /// # Panics
-    /// This method does not panic.
+    /// # Errors
+    /// This method does not return an error.
     pub fn get_number_of_edges(&self) -> u64{
         self.number_of_edges
     }
@@ -75,18 +79,26 @@ impl DiskNode{
     /// Uses `unsafe` pointer casting. This is sound because `DiskNode` is
     /// `#[repr(C)]` and derives `Pod`.
     ///
-    /// # Panics
-    /// This method does not panic.
+    /// # Errors
+    /// This method does not return an error.
     pub fn convert_to_bytes(&self) -> &[u8]{
         unsafe{
             std::slice::from_raw_parts(self as *const DiskNode as *const u8, std::mem::size_of::<DiskNode>())
         }
     }
 
+    /// Verifies if the node has enough capacity to add another forward edge.
+    ///
+    /// # Errors
+    /// This method does not return an error.
     pub fn verify_enough_capacity(&self) -> bool{
         self.capacity >= (self.number_of_edges + 1) * size_of::<DiskEdge>() as u64 
     }
 
+    /// Verifies if the node has enough reverse capacity to add another reverse edge.
+    ///
+    /// # Errors
+    /// This method does not return an error.
     pub fn verify_enough_reverse_capacity(&self) -> bool{
         self.reverse_capacity >= (self.number_of_reverse_edges + 1) * size_of::<u64>() as u64
     }

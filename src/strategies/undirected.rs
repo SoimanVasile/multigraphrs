@@ -20,6 +20,9 @@ where
     /// # Errors
     /// Returns `GraphErrors::NodeNotFound` if the `source` or `target` node 
     /// is missing from the graph's adjacency list.
+    ///
+    /// # Side Effects
+    /// Mutates the `graph` storage backend by adding the forward and reverse edges.
     fn add_edge(
         graph: &mut impl StorageBackend<u32>,
         source: u64, 
@@ -37,6 +40,13 @@ where
         Ok(edge)
     }
 
+    /// Adds multiple undirected edges to the graph efficiently in bulk.
+    ///
+    /// # Errors
+    /// Returns a `GraphErrors` if the underlying storage operations fail.
+    ///
+    /// # Side Effects
+    /// Mutates the `graph` storage backend to add the given undirected edges in bulk.
     fn bulk_add_edge(graph: &mut impl StorageBackend<u32>, hashed_nodes: &[(u64, u64, u32)]) -> Result<(), crate::GraphErrors> {
         let mut edges: Vec<(u64, Edge<u32>)> = Vec::with_capacity(hashed_nodes.len());
         for (source, target, weight) in hashed_nodes{
@@ -45,8 +55,25 @@ where
         }
 
         graph.bulk_add_edge_to_node(&edges);
+        graph.bulk_add_reverse_edge(hashed_nodes);
 
         Ok(())
+    }
+
+    fn bulk_remove_edge(graph: &mut impl StorageBackend<u32>, edges: &[(u64, u64, u32)]) {
+        let mut edges_to_remove: Vec<(u64, Edge<u32>)> = Vec::with_capacity(edges.len() * 2);
+        let mut reverse_edges_to_remove: Vec<(u64, u64)> = Vec::with_capacity(edges.len() * 2);
+        
+        for (source, target, weight) in edges {
+            edges_to_remove.push((*source, Edge::new(*target, weight)));
+            reverse_edges_to_remove.push((*target, *source));
+            
+            edges_to_remove.push((*target, Edge::new(*source, weight)));
+            reverse_edges_to_remove.push((*source, *target));
+        }
+        
+        graph.bulk_remove_edge(&edges_to_remove);
+        graph.bulk_remove_reverse_edge(&reverse_edges_to_remove);
     }
 
     /// Removes the undirected edge between `source` and `target`.
@@ -63,21 +90,25 @@ where
     ///
     /// # Panics
     /// Panics if `source` or `target` is out of bounds in the storage backend.
+    ///
+    /// # Side Effects
+    /// Mutates the `graph` storage backend by removing both the forward and reverse edges.
     fn remove_edge(graph: &mut impl StorageBackend<u32>, source: u64, target: u64, weight: &u32 ) -> Result<Edge<u32>, crate::core::graph_errors::GraphErrors> {
         let edge = Edge::new(target, weight);
         let reverse_edge = Edge::new(source, weight);
-        graph.remove_edge(&target, &reverse_edge, |edge_1: &Edge<u32>, edge_2: &Edge<u32>| -> bool {
-            edge_1.get_target() == edge_2.get_target()
-        })?;
-        graph.remove_edge(&source, &edge, |edge_1: &Edge<u32>, edge_2: &Edge<u32>| -> bool {
-            edge_1.get_target() == edge_2.get_target()
-        })
+        graph.remove_edge(&target, &reverse_edge)?;
+        graph.remove_edge(&source, &edge)
     }
+
+
 
     /// Removes a node and all connected edges. O(degree(node)).
     ///
     /// Since the graph is undirected, every edge in node's outgoing list implies
     /// a reverse edge in the neighbor's list. We use this to avoid a full scan.
+    ///
+    /// # Side Effects
+    /// Mutates the `graph` storage backend by clearing all incident edges and freeing the `node_id`.
     fn remove_node(graph: &mut impl StorageBackend<u32>, node_id: u64) {
         // Collect outgoing edges first (tells us exactly who has edges back to us)
         let edges: Vec<Edge<u32>> = graph.get_edges(&node_id).collect();
