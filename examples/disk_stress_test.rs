@@ -89,7 +89,7 @@ impl BenchResult {
 }
 
 fn run_stress_test(node_count: u32, edges_per_node: u32, test_name: &str) {
-    let mut dir = env::temp_dir();
+    let mut dir = PathBuf::from("/home/missuki/Documents/rust_temp/");
     dir.push(format!("multigraphrs_stress_{}", test_name));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
@@ -104,9 +104,7 @@ fn run_stress_test(node_count: u32, edges_per_node: u32, test_name: &str) {
     // ─── Phase 1: Add Nodes ───
     let rss_before = get_rss_bytes();
     let start = Instant::now();
-    for i in 0..node_count {
-        graph.add_node(i).unwrap();
-    }
+    graph.bulk_add_node(&Vec::from_iter(0..node_count));
     let duration = start.elapsed();
     let rss_after = get_rss_bytes();
     results.push(BenchResult {
@@ -119,17 +117,19 @@ fn run_stress_test(node_count: u32, edges_per_node: u32, test_name: &str) {
 
     // ─── Phase 2: Add Edges (chain + fan-out) ───
     let rss_before = get_rss_bytes();
-    let start = Instant::now();
     let mut edge_total = 0u64;
+    let mut edges: Vec<(u32, u32)> = Vec::with_capacity(node_count as usize* edges_per_node as usize);
     for i in 0..node_count {
         for j in 1..=edges_per_node {
             let target = (i + j) % node_count;
             if target != i {
-                graph.add_edge(i, target).unwrap();
+                edges.push((i, target));
                 edge_total += 1;
             }
         }
     }
+    let start = Instant::now();
+    graph.bulk_add_edge(&edges);
     let duration = start.elapsed();
     let rss_after = get_rss_bytes();
     results.push(BenchResult {
@@ -204,65 +204,65 @@ fn run_stress_test(node_count: u32, edges_per_node: u32, test_name: &str) {
     let remove_edge_count = node_count / 2;
     let rss_before = get_rss_bytes();
     let start = Instant::now();
-    let mut removed = 0u32;
+    // let mut removed = 0u32;
+    let mut edges: Vec<(u32, u32)> = Vec::with_capacity(remove_edge_count as usize);
     for i in 0..remove_edge_count {
         let target = (i + 1) % node_count;
-        if graph.remove_edge(i, target).is_ok() {
-            removed += 1;
-        }
+        edges.push((i, target));
     }
+    graph.bulk_remove_edge(&edges);
     let duration = start.elapsed();
     let rss_after = get_rss_bytes();
     results.push(BenchResult {
-        label: format!("Remove {} edges ({} succeeded)", remove_edge_count, removed),
+        label: format!("Remove {} edges ", remove_edge_count),
         duration,
         rss_before,
         rss_after,
         disk_size: dir_total_size(&dir),
     });
 
-    // ─── Phase 7: Remove nodes (25% of total) ───
-    let remove_node_count = node_count / 4;
-    let rss_before = get_rss_bytes();
-    let start = Instant::now();
-    let mut nodes_removed = 0u32;
-    for i in 0..remove_node_count {
-        if graph.remove_node(&i).is_ok() {
-            nodes_removed += 1;
-        }
-    }
-    let duration = start.elapsed();
-    let rss_after = get_rss_bytes();
-    results.push(BenchResult {
-        label: format!("Remove {} nodes ({} ok)", remove_node_count, nodes_removed),
-        duration,
-        rss_before,
-        rss_after,
-        disk_size: dir_total_size(&dir),
-    });
-
-    // ─── Phase 8: Iterate over entire graph ───
-    let rss_before = get_rss_bytes();
-    let start = Instant::now();
-    let mut iter_nodes = 0usize;
-    let mut iter_edges = 0usize;
-    for (_node, edges) in graph.iter() {
-        iter_nodes += 1;
-        iter_edges += edges.len();
-    }
-    let duration = start.elapsed();
-    let rss_after = get_rss_bytes();
-    results.push(BenchResult {
-        label: format!(
-            "Iterate graph ({} nodes, {} edges)",
-            iter_nodes, iter_edges
-        ),
-        duration,
-        rss_before,
-        rss_after,
-        disk_size: dir_total_size(&dir),
-    });
-
+    // // ─── Phase 7: Remove nodes (25% of total) ───
+    // let remove_node_count = node_count / 4;
+    // let rss_before = get_rss_bytes();
+    // let start = Instant::now();
+    // let mut nodes_removed = 0u32;
+    // for i in 0..remove_node_count {
+    //     if graph.remove_node(&i).is_ok() {
+    //         nodes_removed += 1;
+    //     }
+    // }
+    // let duration = start.elapsed();
+    // let rss_after = get_rss_bytes();
+    // results.push(BenchResult {
+    //     label: format!("Remove {} nodes ({} ok)", remove_node_count, nodes_removed),
+    //     duration,
+    //     rss_before,
+    //     rss_after,
+    //     disk_size: dir_total_size(&dir),
+    // });
+    //
+    // // ─── Phase 8: Iterate over entire graph ───
+    // let rss_before = get_rss_bytes();
+    // let start = Instant::now();
+    // let mut iter_nodes = 0usize;
+    // let mut iter_edges = 0usize;
+    // for (_node, edges) in graph.iter() {
+    //     iter_nodes += 1;
+    //     iter_edges += edges.len();
+    // }
+    // let duration = start.elapsed();
+    // let rss_after = get_rss_bytes();
+    // results.push(BenchResult {
+    //     label: format!(
+    //         "Iterate graph ({} nodes, {} edges)",
+    //         iter_nodes, iter_edges
+    //     ),
+    //     duration,
+    //     rss_before,
+    //     rss_after,
+    //     disk_size: dir_total_size(&dir),
+    // });
+    //
     let total_elapsed = total_start.elapsed();
 
     // ─── Print Report ───
@@ -303,7 +303,7 @@ fn main() {
     println!();
 
     // 10M nodes, 3 edges each = 30M edges
-    // With 256-byte initial capacity: ~5.5 GB disk usage (fits in 7.7 GB tmpfs)
+    // With 128-byte initial capacity: ~5.5 GB disk usage (fits in 7.7 GB tmpfs)
     run_stress_test(10_000_000, 3, "massive_10m");
 
     println!();

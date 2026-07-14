@@ -124,7 +124,7 @@ fn test_remove_edge() {
     assert_eq!(temp.storage.node_len(&0), 1);
 
     // Remove the edge
-    let res = temp.storage.remove_edge(&0, &edge, |a, b| a.get_target() == b.get_target() && a.get_weight() == b.get_weight());
+    let res = temp.storage.remove_edge(&0, &edge);
     assert!(res.is_ok(), "Removing an existing edge should succeed");
     
     // Edge is logically removed
