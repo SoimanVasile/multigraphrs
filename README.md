@@ -14,6 +14,8 @@ A **strategy-pattern based** multigraph library for Rust. One generic `MultiGrap
 - **Multigraph support** — multiple parallel edges between the same pair of nodes
 - **Strategy Pattern** — a single `MultiGraph` core with four interchangeable strategy types
 - **Generic nodes & weights** — any `K: Eq + Hash + Clone` for nodes, any `W: Clone + PartialEq` for weights (including `f64`)
+- **Storage Backends** — fully pluggable storage (`RamStorage` for fast in-memory, `DiskStorage` with Write-Ahead Logging for persistence)
+- **Bulk Operations** — `bulk_add_node`, `bulk_add_edge`, and `bulk_remove_edge` methods optimized for batched processing
 - **Safe error handling** — all operations return `Result<T, GraphErrors>`, no panics
 - **`EdgeView<K, W>`** — public return type that hides internal indices and exposes user-facing keys
 - **Zero-cost abstractions** — strategies are zero-sized types resolved at compile-time via `PhantomData`
@@ -105,15 +107,19 @@ assert_eq!(*edge.get_weight(), 42.5);
 
 ## API Overview
 
-### `MultiGraph<K, W, S>`
+### `MultiGraph<K, W, S, B>`
 
 | Method | Returns | Description |
 | :--- | :--- | :--- |
-| `new()` | `MultiGraph<K, W, S>` | Create an empty graph |
+| `new()` | `MultiGraph<K, W, S, RamStorage<W>>` | Create an empty graph in RAM |
+| `with_backend(backend)`| `MultiGraph<K, W, S, B>` | Create a graph with a custom backend (e.g. `DiskStorage`) |
 | `add_node(key)` | `Result<K, GraphErrors>` | Insert a node |
 | `remove_node(&key)` | `Result<K, GraphErrors>` | Remove a node and all its edges |
 | `add_edge(...)` | `Result<EdgeView<K, W>, GraphErrors>` | Insert an edge (signature varies by strategy) |
 | `remove_edge(...)` | `Result<EdgeView<K, W>, GraphErrors>` | Remove an edge by exact match |
+| `bulk_add_node(keys)` | `Result<(), GraphErrors>` | Efficiently add multiple nodes |
+| `bulk_add_edge(edges)`| `Result<(), GraphErrors>` | Efficiently add multiple edges |
+| `bulk_remove_edge(edges)`| `Result<(), GraphErrors>` | Efficiently remove multiple edges |
 | `degree(&key)` | `Result<usize, GraphErrors>` | Number of edges incident to a node |
 | `contains_node(&key)` | `bool` | Check if a node exists |
 | `contains_edge(&src, &tgt)` | `bool` | Check if an edge exists |
@@ -140,10 +146,10 @@ assert_eq!(*edge.get_weight(), 42.5);
 ## Architecture
 
 ```
-MultiGraph<K, W, S>
+MultiGraph<K, W, S, B>
 ├── hashed_nodes: HashMap<K, usize>        // user key → internal index
-├── reversed_hashed_nodes: Vec<Option<K>>   // internal index → user key (None if removed)
-├── adjacency_list: AdjacencyList<W>       // Vec<Vec<Edge<W>>>
+├── reversed_hashed_nodes: Vec<Option<K>>  // internal index → user key (None if removed)
+├── adjacency_list: B                      // StorageBackend<W> (e.g., RamStorage or DiskStorage)
 └── _strategy: PhantomData<S>              // zero-cost strategy marker
 
 DirectionStrategy<W>  (trait)
