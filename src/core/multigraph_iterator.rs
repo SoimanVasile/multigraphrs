@@ -24,6 +24,17 @@ where
     B: StorageBackend<W>
 {
     type Item = (&'a K, Vec<EdgeView<K, W>>);
+    
+    /// Advances the iterator and returns the next node and its outgoing edges.
+    ///
+    /// # Side Effects
+    /// Mutates the iterator's internal `index` state to point to the next valid node.
+    ///
+    /// # Panics
+    /// Panics if an edge's target node cannot be unwrapped from the reverse lookup (indicating an internal bug).
+    ///
+    /// # Errors
+    /// This function does not return an error; it returns `None` when iteration is complete.
     fn next(&mut self) -> Option<Self::Item>{
         if (self.graph.reversed_hashed_nodes.len() as u64) <= self.index{
             return None;

@@ -40,6 +40,11 @@ pub struct SuperBlock{
 }
 
 impl Default for SuperBlock{
+    /// Returns a default instance of `SuperBlock`.
+    ///
+    /// # Errors
+    /// None.
+    ///
     fn default() -> Self{
         Self::new()
     }
@@ -55,8 +60,9 @@ impl SuperBlock {
     /// # Returns
     /// An **owned** `SuperBlock`.
     ///
-    /// # Panics
-    /// This method does not panic.
+    /// # Errors
+    /// None.
+    ///
     pub fn new() -> Self{
         Self{
             magic_number: u32::from_le_bytes(*b"MGRF"),
@@ -82,8 +88,9 @@ impl SuperBlock {
     /// # Returns
     /// A **copy** of `node_count` (`u64` is `Copy`).
     ///
-    /// # Panics
-    /// This method does not panic.
+    /// # Errors
+    /// None.
+    ///
     pub fn get_node_count(&self) -> u64{
         self.node_count
     }
@@ -92,8 +99,12 @@ impl SuperBlock {
     ///
     /// Mutates `self` in place.
     ///
-    /// # Panics
-    /// This method does not panic (may overflow on `u64::MAX`, which is unreachable in practice).
+    /// # Side Effects
+    /// Modifies the `node_count` field of `self`.
+    ///
+    /// # Errors
+    /// None.
+    ///
     pub fn increment_node_counter(&mut self){
         self.node_count+=1;
     }
@@ -106,8 +117,9 @@ impl SuperBlock {
     /// # Safety
     /// Uses `unsafe` pointer casting. Sound because `SuperBlock` is `#[repr(C)]` and `Pod`.
     ///
-    /// # Panics
-    /// This method does not panic.
+    /// # Errors
+    /// None.
+    ///
     pub fn convert_to_bytes(&self) -> &[u8]{
         unsafe{
             std::slice::from_raw_parts(
@@ -122,14 +134,26 @@ impl SuperBlock {
     /// # Returns
     /// A **copy** of `next_structure_free_block` (`u64` is `Copy`).
     ///
-    /// # Panics
-    /// This method does not panic.
+    /// # Side Effects
+    /// Advances `next_structure_free_block` by `size`.
+    ///
+    /// # Errors
+    /// None.
+    ///
     pub fn get_free_block_structure(&mut self, size: &u64) -> u64{
         self.next_structure_free_block += *size;
 
         self.next_structure_free_block - *size
     }
 
+    /// Returns the next free byte offset in `reverse_structure.bin`.
+    ///
+    /// # Side Effects
+    /// Advances `next_reverse_structure_free_block` by `size`.
+    ///
+    /// # Errors
+    /// None.
+    ///
     pub fn get_free_block_reverse_structure(&mut self, size: &u64) -> u64{
         self.next_reverse_structure_free_block += *size;
 
@@ -141,8 +165,9 @@ impl SuperBlock {
     /// # Returns
     /// A **copy** of `next_data_free_block` (`u64` is `Copy`).
     ///
-    /// # Panics
-    /// This method does not panic.
+    /// # Errors
+    /// None.
+    ///
     pub fn get_free_block_data(&self) -> u64{
         self.next_data_free_block
     }
@@ -150,37 +175,88 @@ impl SuperBlock {
     ///
     /// Mutates `self` in place.
     ///
-    /// # Panics
-    /// This method does not panic.
+    /// # Side Effects
+    /// Modifies the `next_data_free_block` field of `self`.
+    ///
+    /// # Errors
+    /// None.
+    ///
     pub fn find_next_data_free_block(&mut self, size: &u64){
         self.next_data_free_block += *size;
     }
 
-    /// Returns the next free byte offset in `reverse_structure.bin`.
+    /// Returns the `i`-th header value for `reverse_structure.bin`.
     ///
     /// # Returns
-    /// A **copy** of `next_reverse_structure_free_block` (`u64` is `Copy`).
+    /// A **copy** of the requested header (`u64` is `Copy`).
+    ///
+    /// # Errors
+    /// None.
     ///
     /// # Panics
-    /// This method does not panic.
+    /// Panics if `i` is out of bounds for the `header_reverse_structure` array.
     pub fn get_ith_header_reverse_structure(&self, i: &u64) -> u64{
         return self.header_reverse_structure[*i as usize];
     }
 
+    /// Returns the `i`-th header value for `structure.bin`.
+    ///
+    /// # Errors
+    /// None.
+    ///
+    /// # Panics
+    /// Panics if `i` is out of bounds for the `header_structure` array.
     pub fn get_ith_header_structure(&self, i: &u64) -> u64{
         return self.header_structure[*i as usize]
     }
 
+    /// Returns the index of the next free node from the linked list.
+    ///
+    /// # Errors
+    /// None.
+    ///
     pub fn next_free_node(&self) -> u64{
         self.head_linked_list_node
     }
 
+    /// Updates the head of the free node linked list.
+    ///
+    /// # Side Effects
+    /// Modifies `head_linked_list_node`.
+    ///
+    /// # Errors
+    /// None.
+    ///
     pub fn change_header(&mut self, next_id: &u64){
         self.head_linked_list_node = *next_id;
     }
 
+    /// Sets the `i`-th header value for `structure.bin`.
+    ///
+    /// # Side Effects
+    /// Modifies `header_structure`.
+    ///
+    /// # Errors
+    /// None.
+    ///
+    /// # Panics
+    /// Panics if `index` is out of bounds.
     pub fn next_header_structure(&mut self, index: &u64, next_id: &u64){
         self.header_structure[*index as usize] = *next_id;
+    }
+
+    /// Sets the `i`-th header value for `reverse_structure.bin`.
+    ///
+    /// # Side Effects
+    /// Modifies `header_reverse_structure`.
+    ///
+    /// # Errors
+    /// None.
+    ///
+    /// # Panics
+    /// Panics if `index` is out of bounds.
+    pub fn next_header_reverse_structure(&mut self, index: &u64, next_id: &u64){
+        self.header_reverse_structure[*index as usize] = *next_id;
     }
         
 }

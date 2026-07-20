@@ -32,9 +32,8 @@ where
     /// * `offset` - Starting byte offset in `structure.bin` (**copied**, `u64` is `Copy`).
     /// * `number_of_edges` - Number of edges to iterate (**copied**).
     ///
-    /// # Panics
-    /// This method does not panic. Panics may occur later during iteration
-    /// if the offset is invalid.
+    /// # Errors
+    /// This method does not return an error.
     pub fn new(mmap_ref: &'a DiskStorage<W>, offset: &u64, number_of_edges: &u64) -> DiskEdgeIterator<'a, W>{
         DiskEdgeIterator{mmap_ref, current_offset: *offset, edges_left: *number_of_edges}
     }
@@ -52,6 +51,12 @@ where
     ///
     /// # Panics
     /// Panics if the current offset exceeds the structure or data memory map bounds.
+    ///
+    /// # Side Effects
+    /// Updates the `current_offset` and decrements `edges_left`.
+    ///
+    /// # Errors
+    /// This method does not return an error directly, but may panic on invalid bounds.
     fn next(&mut self) -> Option<<Self as Iterator>::Item>{
         if self.edges_left == 0{
             return None;
@@ -98,9 +103,8 @@ where
     /// * `offset` - Starting byte offset in `reverse_structure.bin` (**copied**).
     /// * `number_of_edges` - Number of reverse entries to iterate (**copied**).
     ///
-    /// # Panics
-    /// This method does not panic. Panics may occur later during iteration
-    /// if the offset is invalid.
+    /// # Errors
+    /// This method does not return an error.
     pub fn new(mmap_ref: &'a DiskStorage<W>, offset: &u64, number_of_edges: &u64) -> DiskReverseEdgeIterator<'a, W>{
         DiskReverseEdgeIterator{mmap_ref, current_offset: *offset, edges_left: *number_of_edges}
     }
@@ -119,6 +123,12 @@ where
     /// # Panics
     /// * Panics if the current offset exceeds the reverse structure memory map bounds.
     /// * Panics (via `unwrap`) if the byte slice cannot be converted to a `[u8; 8]` array.
+    ///
+    /// # Side Effects
+    /// Updates the `current_offset` and decrements `edges_left`.
+    ///
+    /// # Errors
+    /// This method does not return an error directly, but may panic on invalid bounds or deserialization failure.
     fn next(&mut self) -> Option<<Self as Iterator>::Item>{
         if self.edges_left == 0{
             return None;
