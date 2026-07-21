@@ -49,13 +49,16 @@ where
     /// Mutates the `graph` storage backend to add the given undirected edges in bulk.
     fn bulk_add_edge(graph: &mut impl StorageBackend<u32>, hashed_nodes: &[(u64, u64, u32)]) -> Result<(), crate::GraphErrors> {
         let mut edges: Vec<(u64, Edge<u32>)> = Vec::with_capacity(hashed_nodes.len());
+        let mut reverse_edges: Vec<(u64, Edge<u32>)> = Vec::with_capacity(hashed_nodes.len());
         for (source, target, weight) in hashed_nodes{
             let edge = Edge::new(*target, weight);
+            let reverse_edge = Edge::new(*source, weight);
             edges.push((*source, edge));
+            reverse_edges.push((*target, reverse_edge));
         }
 
         graph.bulk_add_edge_to_node(&edges);
-        graph.bulk_add_reverse_edge(hashed_nodes);
+        graph.bulk_add_edge_to_node(&reverse_edges);
 
         Ok(())
     }
