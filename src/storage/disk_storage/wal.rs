@@ -32,7 +32,7 @@ pub enum WalRecord {
     Write { file_id: FileId, offset: u64, bytes: Vec<u8> },
     Zero { file_id: FileId, offset: u64, end: u64 },
     CopyWithin { file_id: FileId, src_start: u64, src_end: u64, dest_start: u64 },
-    IncreaseFileSize { file_id: FileId },
+    IncreaseFileSize { file_id: FileId, size: u64},
 }
 
 impl WalRecord {
@@ -45,7 +45,7 @@ impl WalRecord {
             WalRecord::Write { file_id, .. } => *file_id,
             WalRecord::Zero { file_id, .. } => *file_id,
             WalRecord::CopyWithin { file_id, .. } => *file_id,
-            WalRecord::IncreaseFileSize { file_id } => *file_id,
+            WalRecord::IncreaseFileSize { file_id, ..} => *file_id,
         }
     }
 }
@@ -108,8 +108,8 @@ impl WalTransaction {
     ///
     /// # Errors
     /// This method does not return an error.
-    pub fn increase_file_size(&mut self, file_id: FileId) {
-        self.records.push(WalRecord::IncreaseFileSize { file_id });
+    pub fn increase_file_size(&mut self, file_id: FileId, size: u64) {
+        self.records.push(WalRecord::IncreaseFileSize { file_id, size });
     }
 
     /// Calculates the checksum for a given payload.
@@ -158,9 +158,10 @@ impl WalTransaction {
                     payload.extend_from_slice(&src_end.to_le_bytes());
                     payload.extend_from_slice(&dest_start.to_le_bytes());
                 }
-                WalRecord::IncreaseFileSize { file_id } => {
+                WalRecord::IncreaseFileSize { file_id, size } => {
                     payload.push(3);
                     payload.push(*file_id as u8);
+                    payload.extend_from_slice(&size.to_le_bytes());
                 }
             }
         }
@@ -259,7 +260,12 @@ impl WalTransaction {
                         records.push(WalRecord::CopyWithin { file_id, src_start, src_end, dest_start });
                     }
                     3 => {
-                        records.push(WalRecord::IncreaseFileSize { file_id });
+                        if cursor + 8 > payload.len() { valid = false; break; }
+                        let mut buf8 = [0u8; 8];
+                        buf8.copy_from_slice(&payload[cursor..cursor + 8 ]);
+                        cursor += 8;
+                         let size = u64::from_le_bytes(buf8);
+                        records.push(WalRecord::IncreaseFileSize { file_id, size});
                     }
                     _ => { valid = false; break; }
                 }
@@ -344,8 +350,10 @@ impl WalManager {
                     WalRecord::CopyWithin { src_start, src_end, dest_start, .. } => {
                         fm.copy_within(src_start, src_end, dest_start);
                     }
-                    WalRecord::IncreaseFileSize { .. } => {
-                        fm.increase_file_size()?;
+                    WalRecord::IncreaseFileSize { size, .. } => {
+                        if fm.file_len().unwrap() < size{
+                            fm.increase_file_size()?;
+                        }
                     }
                 }
             }

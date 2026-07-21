@@ -151,7 +151,22 @@ where
             }
 
             if non_existing_nodes.len() >= MAX_CAPACITY_BULK{
-                let nodes_id = self.adjacency_list.bulk_add_node(&(non_existing_nodes.len() as u64));
+                let mut nodes_id = self.adjacency_list.bulk_add_node(&(non_existing_nodes.len() as u64));
+
+                nodes_id.sort();
+                let nodes_id: Vec<u64> = nodes_id.into_iter().scan(None, |previous, curr|{
+                    if let Some(prev) = *previous{
+                        if prev == curr{
+                            None
+                        }else{
+                            *previous = Some(curr);
+                            Some(curr)
+                        }
+                    }else{
+                        *previous = Some(curr);
+                        Some(curr)
+                    }
+                }).collect();
 
                 let max = nodes_id.iter().max().unwrap();
 
@@ -388,12 +403,12 @@ where
 
             let source_hashed = match self.hashed_nodes.get(source){
                 Some(t) => t,
-                None => return Err(GraphErrors::NodeNotFound),
+                None => continue
             };
 
             let target_hashed = match self.hashed_nodes.get(target){
                 Some(t) => t,
-                None => return Err(GraphErrors::NodeNotFound),
+                None => continue
             };
 
             hashed_edges.push((*source_hashed, *target_hashed, weight.clone()));
@@ -520,12 +535,12 @@ where
 
             let source_hashed = match self.hashed_nodes.get(source){
                 Some(t) => t,
-                None => return Err(GraphErrors::NodeNotFound),
+                None => continue
             };
 
             let target_hashed = match self.hashed_nodes.get(target){
                 Some(t) => t,
-                None => return Err(GraphErrors::NodeNotFound),
+                None => continue
             };
 
             hashed_edges.push((*source_hashed, *target_hashed, weight.clone()));
@@ -639,12 +654,12 @@ where
             
             let source_hashed = match self.hashed_nodes.get(&source){
                 Some(t) => t,
-                None => return Err(GraphErrors::NodeNotFound),
+                None => continue,
             };
 
             let target_hashed = match self.hashed_nodes.get(&target){
                 Some(t) => t,
-                None => return Err(GraphErrors::NodeNotFound),
+                None => continue,
             };
 
             hashed_edges.push((*source_hashed, *target_hashed, 1u32));

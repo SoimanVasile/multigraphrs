@@ -128,7 +128,7 @@ impl<'a> AllocatedStruct<'a>
     /// # Errors
     /// This method does not return an error.
     fn split_capacity_into_power_of_2s(&mut self, new_offset: &u64, new_cap: &u64){
-        let mut power_of_2: [u64; 15] = [0; 15];
+        let mut power_of_2: [u64; 40] = [0; 40];
         let mut cap_div = new_cap >> 7;
         while cap_div != 0{
             let cap_div_index = u64::BITS - 1 - cap_div.leading_zeros();
