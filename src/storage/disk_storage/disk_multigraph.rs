@@ -18,6 +18,59 @@ use crate::storage::disk_storage::wal::{WalManager, WalTransaction, WalRecord, F
 
 const SUPER_BLOCK_SIZE: usize = 1024;
 
+
+/// allocates memory for the edges on the respective file_manager
+///
+/// # Arguments
+/// * `disk_node` - which [`DiskNode`] to allocate for
+/// * `file_manager` - which file to be allocated in
+/// * `file_id` - the FileId for the file_manager (if its different then the function will have UB)
+/// * `super_block` - [`SuperBlock`]
+/// * `tx` - the [`WalTransaction`] to save the changes
+/// 
+///
+fn allocated_disk_node(disk_node: &mut DiskNode, file_manager: &mut FileManager, file_id: FileId, super_block: &mut SuperBlock, tx: &mut WalTransaction){
+
+    let (edge_offset, capacity) = match file_id{
+        FileId::Structure => (&mut disk_node.list_edges_offset, disk_node.capacity),
+        FileId::Reverse => (&mut disk_node.list_reverse_edges_offset, disk_node.reverse_capacity),
+        FileId::Node => {return;},
+        FileId::Data => {return;},
+    };
+    *edge_offset = {
+        let mut alloc = AllocatedStruct::new(file_manager, super_block, Some(tx), file_id);
+        alloc.allocate_structure(&DISK_NODE_INITIAL_CAPACITY)
+    };
+
+    while *edge_offset + capacity > file_manager.file_len().unwrap(){
+        tx.increase_file_size(file_id, file_manager.check_next_size( file_manager.file_len().unwrap()).unwrap());
+        file_manager.increase_file_size().unwrap();
+    }
+    tx.zero_mmap(file_id, *edge_offset, *edge_offset + capacity);
+
+}
+
+
+/// Checks if the edges for the node was allocated
+///
+///  # Arguments
+///  * `disk_node` - the [`DiskNode`] to check
+///  * `file_id` - which file to check if it the [`DiskNode`] was allocated
+///
+/// # Panics:
+/// If file_id is different to Reverse or Structure as these are the only files which contains
+/// edges
+fn check_node_allocated(disk_node: &DiskNode, file_id: FileId) -> Result<bool, GraphErrors>{
+    let edge_offset = match file_id{
+        FileId::Reverse => disk_node.list_reverse_edges_offset,
+        FileId::Structure => disk_node.list_edges_offset,
+        FileId::Data => return Err(GraphErrors::WrongFileId),
+        FileId::Node => return Err( GraphErrors::WrongFileId),
+    };
+
+    Ok(edge_offset == u64::MAX)
+}
+
 /// Allocates memory in the file with the respective size
 ///
 /// # Side Effects
@@ -738,18 +791,8 @@ where
         let mut disk_node = self.get_disk_node(node);
         let mut superblock = self.get_super_block();
 
-        if disk_node.list_edges_offset == u64::MAX{
-            disk_node.list_edges_offset = {
-                let mut alloc = AllocatedStruct::new(&mut self.file_manager_edge_structure, &mut superblock, Some(&mut tx), FileId::Structure);
-                alloc.allocate_structure(&DISK_NODE_INITIAL_CAPACITY)
-            };
-
-            while disk_node.list_edges_offset + disk_node.capacity > self.file_manager_edge_structure.file_len().unwrap(){
-                tx.increase_file_size(FileId::Structure, self.file_manager_edge_structure.check_next_size(self.file_manager_edge_structure.file_len().unwrap()).unwrap());
-                self.file_manager_edge_structure.increase_file_size().unwrap();
-            }
-            tx.zero_mmap(FileId::Structure, disk_node.list_edges_offset, disk_node.list_edges_offset + disk_node.capacity);
-            // We apply it immediately to mmap because otherwise subsequent steps in THIS tx might not work? No, write_disk_edge just writes bytes.
+        if check_node_allocated(&disk_node, FileId::Structure).unwrap(){
+            allocated_disk_node(&mut disk_node, &mut self.file_manager_edge_structure, FileId::Structure, &mut superblock, &mut tx);
         }
 
         let data_offset = superblock.get_free_block_data();
@@ -792,17 +835,8 @@ where
             }
             let mut disk_node: DiskNode = *seen_disk_node.get(node).unwrap();
 
-            if disk_node.list_edges_offset == u64::MAX{
-                disk_node.list_edges_offset = {
-                    let mut alloc = AllocatedStruct::new(&mut self.file_manager_edge_structure, &mut super_block, Some(&mut tx), FileId::Structure);
-                    alloc.allocate_structure(&DISK_NODE_INITIAL_CAPACITY)
-                };
-
-                while disk_node.list_edges_offset + disk_node.capacity > self.file_manager_edge_structure.file_len().unwrap(){
-                    tx.increase_file_size(FileId::Structure, self.file_manager_edge_structure.check_next_size(self.file_manager_edge_structure.file_len()?)?);
-                    self.file_manager_edge_structure.increase_file_size().unwrap();
-                }
-                tx.zero_mmap(FileId::Structure, disk_node.list_edges_offset, disk_node.list_edges_offset + disk_node.capacity);
+            if check_node_allocated(&disk_node, FileId::Structure).unwrap(){
+                allocated_disk_node(&mut disk_node, &mut self.file_manager_edge_structure, FileId::Structure, &mut super_block, &mut tx);
             }
 
             let data_offset = super_block.get_free_block_data();
@@ -1073,17 +1107,8 @@ where
         let mut superblock: SuperBlock = self.get_super_block();
 
         // First-time initialization: allocate a reverse edge block for this node
-        if disk_node.list_reverse_edges_offset == u64::MAX {
-            disk_node.list_reverse_edges_offset = {
-                let mut alloc = AllocatedStruct::new(&mut self.file_manager_reverse_edge, &mut superblock, Some(&mut tx), FileId::Reverse);
-                alloc.allocate_structure(&DISK_NODE_INITIAL_CAPACITY)
-            };
-
-            while disk_node.list_reverse_edges_offset + disk_node.reverse_capacity > self.file_manager_reverse_edge.file_len().unwrap() {
-                tx.increase_file_size(FileId::Reverse, self.file_manager_reverse_edge.check_next_size(self.file_manager_reverse_edge.file_len().unwrap()).unwrap());
-                self.file_manager_reverse_edge.increase_file_size().unwrap();
-            }
-            tx.zero_mmap(FileId::Reverse, disk_node.list_reverse_edges_offset, disk_node.list_reverse_edges_offset + disk_node.reverse_capacity);
+        if check_node_allocated(&disk_node, FileId::Reverse).unwrap(){
+            allocated_disk_node(&mut disk_node, &mut self.file_manager_reverse_edge, FileId::Reverse, &mut superblock, &mut tx);
         }
 
         // Check if adding this reverse edge would overflow the allocated capacity
@@ -1118,20 +1143,8 @@ where
                 disk_node = *seen_disk_node.get(target).unwrap();
             }
 
-            if disk_node.list_reverse_edges_offset == u64::MAX {
-                disk_node.list_reverse_edges_offset = {
-                    let mut alloc = AllocatedStruct::new(&mut self.file_manager_reverse_edge,
-                        &mut super_block,
-                        Some(&mut tx),
-                        FileId::Reverse);
-                    alloc.allocate_structure(&DISK_NODE_INITIAL_CAPACITY)
-                };
-
-                while disk_node.list_reverse_edges_offset + disk_node.reverse_capacity > self.file_manager_reverse_edge.file_len().unwrap() {
-                    tx.increase_file_size(FileId::Reverse, self.file_manager_reverse_edge.check_next_size(self.file_manager_reverse_edge.file_len().unwrap()).unwrap());
-                    self.file_manager_reverse_edge.increase_file_size().unwrap();
-                }
-                tx.zero_mmap(FileId::Reverse, disk_node.list_reverse_edges_offset, disk_node.list_reverse_edges_offset + disk_node.reverse_capacity);
+            if check_node_allocated(&disk_node, FileId::Reverse).unwrap(){
+                allocated_disk_node(&mut disk_node, &mut self.file_manager_reverse_edge, FileId::Reverse, &mut super_block, &mut tx);
             }
 
             self.write_reverse_edge(&mut disk_node, source, &mut super_block, Some(&mut tx));
@@ -1197,7 +1210,7 @@ where
     fn remove_reverse_edge(&mut self, source: &u64, origin: &u64) {
         let mut disk_node: DiskNode = self.get_disk_node(source);
 
-        if disk_node.list_reverse_edges_offset == u64::MAX {
+        if check_node_allocated(&disk_node, FileId::Reverse).unwrap(){
             return;
         }
 

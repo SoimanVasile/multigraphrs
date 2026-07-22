@@ -1,5 +1,7 @@
 use std::fmt;
 
+use crate::GraphErrors::WrongFileId;
+
 /// Represents all possible errors that can occur during graph operations.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum GraphErrors {
@@ -9,6 +11,7 @@ pub enum GraphErrors {
     NodeAlreadyExists,
     /// Returned when attempting to remove an edge that does not exist.
     EdgeDoesntExists,
+    WrongFileId,
 }
 
 impl fmt::Display for GraphErrors {
@@ -24,6 +27,7 @@ impl fmt::Display for GraphErrors {
             GraphErrors::NodeNotFound => write!(f, "Node not found in the graph"),
             GraphErrors::NodeAlreadyExists => write!(f, "Node already exists in the graph"),
             GraphErrors::EdgeDoesntExists => write!(f, "Edge does not exist in the graph"),
+            WrongFileId => write!(f, "File id incompatible!")
         }
     }
 }
