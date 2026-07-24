@@ -2,6 +2,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{Write, Read, Seek};
 use std::path::PathBuf;
 use crate::storage::disk_storage::file_manager::FileManager;
+use crate::core::db_error::DbError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileId {
@@ -180,7 +181,7 @@ impl WalTransaction {
     ///
     /// # Errors
     /// Returns an `std::io::Error` if reading from the file fails.
-    pub fn deserialize_all(file: &mut File) -> Result<Vec<WalTransaction>, std::io::Error> {
+    pub fn deserialize_all(file: &mut File) -> Result<Vec<WalTransaction>, DbError> {
         file.rewind()?;
         let mut transactions = Vec::new();
         loop {
@@ -293,7 +294,7 @@ impl WalManager {
     ///
     /// # Errors
     /// Returns an `std::io::Error` if the file cannot be opened or created.
-    pub fn new(path: PathBuf) -> Result<Self, std::io::Error> {
+    pub fn new(path: PathBuf) -> Result<Self, DbError> {
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -310,7 +311,7 @@ impl WalManager {
     ///
     /// # Errors
     /// Returns an `std::io::Error` if writing or syncing to disk fails.
-    pub fn commit(&mut self, tx: &WalTransaction) -> Result<(), std::io::Error> {
+    pub fn commit(&mut self, tx: &WalTransaction) -> Result<(), DbError> {
         let bytes = tx.serialize();
         self.file.write_all(&bytes)?;
         self.file.sync_all()?;
@@ -330,7 +331,7 @@ impl WalManager {
         file_structure: &mut FileManager,
         file_reverse: &mut FileManager,
         file_data: &mut FileManager,
-    ) -> Result<(), std::io::Error> {
+    ) -> Result<(), DbError> {
         let transactions = WalTransaction::deserialize_all(&mut self.file)?;
         for tx in transactions {
             for record in tx.records {
@@ -365,6 +366,7 @@ impl WalManager {
         file_data.flush()?;
 
         self.file.set_len(0)?;
+        self.file.sync_all()?;
         Ok(())
     }
 }
