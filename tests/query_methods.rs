@@ -1,4 +1,4 @@
-use multigraphrs::{Directed, GraphErrors, MultiGraph, Undirected, Weighted, WeightedDirected};
+use multigraphrs::{Directed, GraphError, MultiGraph, Undirected, Weighted, WeightedDirected};
 
 // ============ contains_node ============
 

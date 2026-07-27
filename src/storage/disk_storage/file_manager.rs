@@ -1,6 +1,7 @@
 use std::{fs::OpenOptions, path::PathBuf};
 use memmap2::MmapMut;
 use memmap2::MmapOptions;
+use crate::core::db_error::DbError;
 
 
 const FILE_INITIAL_SIZE: u64 = 1024 * 1024 * 64;
@@ -23,7 +24,7 @@ impl FileManager{
     /// # Errors
     /// Returns an `std::io::Error` if file operations (open, metadata, set_len, map_mut) fail.
     ///
-    pub fn new(file_path: PathBuf) -> Result<(Self, bool), std::io::Error>{
+    pub fn new(file_path: PathBuf) -> Result<(Self, bool), DbError>{
         let mut created = false;
         let file = OpenOptions::new()
             .read(true)
@@ -150,7 +151,7 @@ impl FileManager{
     /// # Errors
     /// Returns `std::io::Error` if file metadata cannot be read, resizing fails, or mapping fails.
     ///
-    pub fn increase_file_size(&mut self) -> Result<(), std::io::Error>{
+    pub fn increase_file_size(&mut self) -> Result<(), DbError>{
         let length = self.check_next_size(self.file_len()?)?;
         self.file.set_len(length)?;
 
@@ -161,7 +162,7 @@ impl FileManager{
         Ok(())
     }
 
-    pub fn check_next_size(&self, length: u64) -> Result<u64, std::io::Error>{
+    pub fn check_next_size(&self, length: u64) -> Result<u64, DbError>{
 
         if length >= FOUR_GB{
             Ok(length + FOUR_GB)
@@ -175,7 +176,7 @@ impl FileManager{
     /// # Errors
     /// Returns `std::io::Error` (though currently infallible) for API consistency.
     ///
-    pub fn file_len(&self) -> Result<u64, std::io::Error>{
+    pub fn file_len(&self) -> Result<u64, DbError>{
         // We can just return the length of the memory map, which is identical to the file's length.
         // This avoids making a statx syscall to the OS.
         Ok(self.mmap.len() as u64)
@@ -189,7 +190,7 @@ impl FileManager{
     /// # Errors
     /// Returns `std::io::Error` if the flush operation fails.
     ///
-    pub fn flush(&self) -> Result<(), std::io::Error> {
-        self.mmap.flush()
+    pub fn flush(&self) -> Result<(), DbError> {
+        Ok(self.mmap.flush()?)
     }
 }

@@ -2,7 +2,9 @@ use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::path::Path;
 
-use crate::GraphErrors;
+use crate::core::graph_errors::GraphError;
+use crate::core::db_error::DbError;
+use std::sync::atomic::{AtomicBool, Ordering};
 use crate::storage::disk_storage::allocater::AllocatedStruct;
 use crate::storage::disk_storage::disk_edge_iterator::DiskEdgeIterator;
 use crate::storage::disk_storage::disk_edge_iterator::DiskReverseEdgeIterator;
@@ -18,6 +20,60 @@ use crate::storage::disk_storage::wal::{WalManager, WalTransaction, WalRecord, F
 
 const SUPER_BLOCK_SIZE: usize = 1024;
 
+
+/// allocates memory for the edges on the respective file_manager
+///
+/// # Arguments
+/// * `disk_node` - which [`DiskNode`] to allocate for
+/// * `file_manager` - which file to be allocated in
+/// * `file_id` - the FileId for the file_manager (if its different then the function will have UB)
+/// * `super_block` - [`SuperBlock`]
+/// * `tx` - the [`WalTransaction`] to save the changes
+/// 
+///
+fn allocated_disk_node(disk_node: &mut DiskNode, file_manager: &mut FileManager, file_id: FileId, super_block: &mut SuperBlock, tx: &mut WalTransaction) -> Result<(), DbError>{
+
+    let (edge_offset, capacity) = match file_id{
+        FileId::Structure => (&mut disk_node.list_edges_offset, disk_node.capacity),
+        FileId::Reverse => (&mut disk_node.list_reverse_edges_offset, disk_node.reverse_capacity),
+        FileId::Node => {return Ok(());},
+        FileId::Data => {return Ok(());},
+    };
+    *edge_offset = {
+        let mut alloc = AllocatedStruct::new(file_manager, super_block, Some(tx), file_id);
+        alloc.allocate_structure(&DISK_NODE_INITIAL_CAPACITY)
+    };
+
+    while *edge_offset + capacity > file_manager.file_len()?{
+        tx.increase_file_size(file_id, file_manager.check_next_size( file_manager.file_len()?)?);
+        file_manager.increase_file_size()?;
+    }
+    tx.zero_mmap(file_id, *edge_offset, *edge_offset + capacity);
+
+    Ok(())
+}
+
+
+/// Checks if the edges for the node was allocated
+///
+///  # Arguments
+///  * `disk_node` - the [`DiskNode`] to check
+///  * `file_id` - which file to check if it the [`DiskNode`] was allocated
+///
+/// # Panics:
+/// If file_id is different to Reverse or Structure as these are the only files which contains
+/// edges
+fn check_node_allocated(disk_node: &DiskNode, file_id: FileId) -> Result<bool, DbError>{
+    let edge_offset = match file_id{
+        FileId::Reverse => disk_node.list_reverse_edges_offset,
+        FileId::Structure => disk_node.list_edges_offset,
+        FileId::Data => return Err(DbError::InvalidFileId(3)),
+        FileId::Node => return Err(DbError::InvalidFileId(2)),
+    };
+
+    Ok(edge_offset == u64::MAX)
+}
+
 /// Allocates memory in the file with the respective size
 ///
 /// # Side Effects
@@ -28,9 +84,9 @@ const SUPER_BLOCK_SIZE: usize = 1024;
 ///
 /// # Panics
 /// Panics if the underlying memory allocation fails.
-fn allocate_memory(file_manager: &mut FileManager, super_block: &mut SuperBlock, mut tx: Option<&mut WalTransaction>, file_id: FileId, size: u64) -> u64{
+fn allocate_memory(file_manager: &mut FileManager, super_block: &mut SuperBlock, tx: Option<&mut WalTransaction>, file_id: FileId, size: u64) -> u64{
     
-        let mut alloc = AllocatedStruct::new(file_manager, super_block, tx.as_deref_mut(), file_id);
+        let mut alloc = AllocatedStruct::new(file_manager, super_block, tx, file_id);
         alloc.allocate_structure(&size)
 }
 
@@ -44,7 +100,7 @@ fn allocate_memory(file_manager: &mut FileManager, super_block: &mut SuperBlock,
 ///
 /// # Panics
 /// Panics if memory cannot be allocated.
-fn resizing_disk_node(file_manager: &mut FileManager, super_block: &mut SuperBlock, disk_node: &mut DiskNode, mut tx: Option<&mut WalTransaction>) -> Result<(), std::io::Error>{
+fn resizing_disk_node(file_manager: &mut FileManager, super_block: &mut SuperBlock, disk_node: &mut DiskNode, mut tx: Option<&mut WalTransaction>) -> Result<(), DbError>{
     disk_node.capacity *= 2;
     let free_offset = {
         allocate_memory(file_manager, super_block, tx.as_deref_mut(), FileId::Structure, disk_node.capacity)
@@ -85,7 +141,7 @@ fn resizing_disk_node(file_manager: &mut FileManager, super_block: &mut SuperBlo
 ///
 /// # Panics
 /// Panics if file size cannot be increased or memory cannot be allocated.
-pub fn resizing_disk_node_reverse(file_manager: &mut FileManager, super_block: &mut SuperBlock, disk_node: &mut DiskNode, mut tx: Option<&mut WalTransaction>) -> Result<(), std::io::Error>{
+pub fn resizing_disk_node_reverse(file_manager: &mut FileManager, super_block: &mut SuperBlock, disk_node: &mut DiskNode, mut tx: Option<&mut WalTransaction>) -> Result<(), DbError>{
     let old_offset = disk_node.list_reverse_edges_offset;
     disk_node.reverse_capacity *= 2;
     let free_offset = {
@@ -93,9 +149,9 @@ pub fn resizing_disk_node_reverse(file_manager: &mut FileManager, super_block: &
         alloc.allocate_structure(&disk_node.reverse_capacity)
     };
 
-    while free_offset + disk_node.reverse_capacity > file_manager.file_len().unwrap() {
+    while free_offset + disk_node.reverse_capacity > file_manager.file_len()? {
         if let Some(ref mut t) = tx { t.increase_file_size(FileId::Reverse, file_manager.check_next_size(file_manager.file_len()?)?); }
-        file_manager.increase_file_size().unwrap();
+        file_manager.increase_file_size()?;
     }
 
     let src_end = old_offset + (disk_node.number_of_reverse_edges * size_of::<u64>() as u64);
@@ -127,6 +183,7 @@ where
     pub(crate) file_manager_reverse_edge: FileManager,
     pub(crate) file_manager_weight_data: FileManager,
     pub(crate) wal_manager: WalManager,
+    is_poisoned: AtomicBool,
     _marker: PhantomData<W>,
 }
 
@@ -135,6 +192,26 @@ impl<W> DiskStorage<W>
 where
     W: Clone + std::cmp::PartialEq + FromDiskBytes,
 {
+    /// Marks the database as poisoned. Once poisoned, all write operations
+    /// will return `DbError::Poisoned`.
+    pub fn poison(&self) {
+        self.is_poisoned.store(true, Ordering::SeqCst);
+    }
+
+    /// Returns `true` if the database has been poisoned by a previous I/O error.
+    pub fn is_poisoned(&self) -> bool {
+        self.is_poisoned.load(Ordering::SeqCst)
+    }
+
+    /// Checks if the database is poisoned and returns an error if so.
+    fn check_poisoned(&self) -> Result<(), DbError> {
+        if self.is_poisoned() {
+            Err(DbError::Poisoned)
+        } else {
+            Ok(())
+        }
+    }
+
     /// Allocates a new [`DiskStorage`] in the specified directory.
     ///
     /// This constructor handles the full initialization of the database storage:
@@ -198,6 +275,7 @@ where
             file_manager_reverse_edge: file_reverse,
             file_manager_weight_data: file_data,
             wal_manager,
+            is_poisoned: AtomicBool::new(false),
             _marker: PhantomData::<W>
         }
     }
@@ -286,7 +364,7 @@ where
     /// # Panics
     /// Panics if the calculated offset or node size exceeds the current bounds of the memory map.
     /// See [`writing_bytes_to_mmap`]
-    pub fn write_disk_node(&mut self, disk_node: &DiskNode, mut tx: Option<&mut WalTransaction>) -> Result<(), std::io::Error>{
+    pub fn write_disk_node(&mut self, disk_node: &DiskNode, mut tx: Option<&mut WalTransaction>) -> Result<(), DbError>{
         let offset = self.calculate_node_offset(&disk_node.node_idx);
         let bytes = disk_node.convert_to_bytes();
 
@@ -359,7 +437,7 @@ where
     ///
     /// # Panics
     /// Panics if the computed write region exceeds the structure memory map bounds.
-    pub fn write_disk_edge(&mut self, disk_node: &mut DiskNode, disk_edge: &DiskEdge, superblock: &mut SuperBlock, mut tx: Option<&mut WalTransaction>) -> Result<(), std::io::Error>{
+    pub fn write_disk_edge(&mut self, disk_node: &mut DiskNode, disk_edge: &DiskEdge, superblock: &mut SuperBlock, mut tx: Option<&mut WalTransaction>) -> Result<(), DbError>{
 
         if  !disk_node.verify_enough_capacity(){
             resizing_disk_node(&mut self.file_manager_edge_structure, superblock, disk_node, tx.as_deref_mut())?;
@@ -391,9 +469,9 @@ where
     ///
     /// # Panics
     /// Panics if writing exceeds the memory map bounds.
-    pub fn write_reverse_edge(&mut self, disk_node: &mut DiskNode, source: &u64, super_block: &mut SuperBlock, mut tx: Option<&mut WalTransaction>) -> Result<(), std::io::Error>{
+    pub fn write_reverse_edge(&mut self, disk_node: &mut DiskNode, source: &u64, super_block: &mut SuperBlock, mut tx: Option<&mut WalTransaction>) -> Result<(), DbError>{
         if !disk_node.verify_enough_reverse_capacity(){
-            resizing_disk_node_reverse(&mut self.file_manager_reverse_edge, super_block, disk_node, tx.as_deref_mut());
+            resizing_disk_node_reverse(&mut self.file_manager_reverse_edge, super_block, disk_node, tx.as_deref_mut())?;
         }
 
         let edge_offset = disk_node.list_reverse_edges_offset + disk_node.number_of_reverse_edges * size_of::<u64>() as u64;
@@ -425,7 +503,7 @@ where
     ///
     /// # Panics
     /// Panics if the write region exceeds the data memory map bounds.
-    pub fn write_weight(&mut self, weight_data_bytes: &[u8], weight_offset: &u64, mut tx: Option<&mut WalTransaction>) -> Result<(), std::io::Error>{
+    pub fn write_weight(&mut self, weight_data_bytes: &[u8], weight_offset: &u64, mut tx: Option<&mut WalTransaction>) -> Result<(), DbError>{
 
         while *weight_offset + weight_data_bytes.len() as u64 > self.file_manager_weight_data.file_len()?{
             if let Some(ref mut t) = tx { t.increase_file_size(FileId::Data, self.file_manager_weight_data.check_next_size(self.file_manager_weight_data.file_len()?)?); }
@@ -447,7 +525,6 @@ where
     ///
     /// # Panics
     /// Panics if the superblock bytes exceed the node memory map bounds.
-
     /// Clears all edges from a node by zeroing its edge region on disk
     /// and resetting the edge count to 0.
     ///
@@ -462,7 +539,7 @@ where
     ///
     /// # Panics
     /// Panics if the edge region exceeds the structure memory map bounds.
-    pub fn remove_edges_from_node(&mut self, disk_node: &mut DiskNode, mut tx: Option<&mut WalTransaction>)-> Result<(), std::io::Error>{
+    pub fn remove_edges_from_node(&mut self, disk_node: &mut DiskNode, mut tx: Option<&mut WalTransaction>)-> Result<(), DbError>{
         let mut super_block = self.get_super_block();
         let mut node_changed = false;
 
@@ -534,7 +611,7 @@ where
     /// * Panics if `edge_number >= disk_node.number_of_edges`
     ///   (causes underflow on `number_of_edges - 1`).
     /// * Panics if any computed offsets exceed the structure memory map bounds.
-    pub fn swap_remove_disk_edge(&mut self, disk_node: &mut DiskNode, edge_number: &u64, super_block: &mut SuperBlock, mut tx: Option<&mut WalTransaction>) -> Result<(), std::io::Error>{
+    pub fn swap_remove_disk_edge(&mut self, disk_node: &mut DiskNode, edge_number: &u64, super_block: &mut SuperBlock, mut tx: Option<&mut WalTransaction>) -> Result<(), DbError>{
 
         if disk_node.number_of_edges == 0{
             return Ok(())
@@ -633,7 +710,7 @@ where
         }
     }
 
-    pub fn swap_remove_disk_reverse_edge(&mut self, disk_node: &mut DiskNode, edge_number: &u64, mut tx: Option<&mut WalTransaction>) -> Result<(), std::io::Error> {
+    pub fn swap_remove_disk_reverse_edge(&mut self, disk_node: &mut DiskNode, edge_number: &u64, mut tx: Option<&mut WalTransaction>) -> Result<(), DbError> {
 
         if disk_node.number_of_reverse_edges == 0{
             return Ok(());
@@ -675,21 +752,26 @@ where
     ///
     /// # Panics
     /// Panics if disk writing or WAL commit fails.
-    fn add_node(&mut self) -> u64 {
+    fn add_node(&mut self) -> Result<u64, GraphError> {
+        self.check_poisoned()?;
         let mut tx = WalTransaction::new();
         let mut superblock: SuperBlock = self.get_super_block();
 
         let new_node_id = self.next_node_id(&mut superblock);
         let disk_node: DiskNode = DiskNode::new(new_node_id, u64::MAX, u64::MAX);
         
-        self.write_disk_node(&disk_node, Some(&mut tx)).unwrap();
+        self.write_disk_node(&disk_node, Some(&mut tx))
+            .map_err(|e| {
+                self.poison();
+                GraphError::Db(e)
+            })?;
         self.write_superblock(&superblock, Some(&mut tx));
 
         // Commit to WAL and then flush to actual mmap
-        self.wal_manager.commit(&tx).unwrap();
+        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
         self.apply_wal_transaction(&tx);
 
-        new_node_id
+        Ok(new_node_id)
     }
 
     /// Adds multiple nodes to the storage.
@@ -703,7 +785,8 @@ where
     ///
     /// # Panics
     /// Panics if disk writing or WAL commit fails.
-    fn bulk_add_node(&mut self, number_of_nodes: &u64) -> Vec<u64>{
+    fn bulk_add_node(&mut self, number_of_nodes: &u64) -> Result<Vec<u64>, GraphError> {
+        self.check_poisoned()?;
         let mut tx = WalTransaction::new();
         let mut super_block: SuperBlock = self.get_super_block();
 
@@ -712,14 +795,17 @@ where
             let id = self.next_node_id(&mut super_block);
             new_ids.push(id);
             let disk_node: DiskNode = DiskNode::new(new_ids[i as usize], u64::MAX, u64::MAX);
-            self.write_disk_node(&disk_node, Some(&mut tx));
+            self.write_disk_node(&disk_node, Some(&mut tx)).map_err(|e| {
+                self.poison();
+                GraphError::Db(e)
+            })?;
         }
 
-        self.write_superblock(&mut super_block, Some(&mut tx));
+        self.write_superblock(&super_block, Some(&mut tx));
 
-        self.wal_manager.commit(&tx).unwrap();
+        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
         self.apply_wal_transaction(&tx);
-        new_ids
+        Ok(new_ids)
     }
 
     /// Adds an edge to a given node.
@@ -733,40 +819,38 @@ where
     ///
     /// # Panics
     /// Panics if disk writing or WAL commit fails.
-    fn add_edge_to_node(&mut self, node: &u64, edge: &Edge<W>) {
+    fn add_edge_to_node(&mut self, node: &u64, edge: &Edge<W>) -> Result<(), GraphError> {
+        self.check_poisoned()?;
         let mut tx = WalTransaction::new();
         let mut disk_node = self.get_disk_node(node);
         let mut superblock = self.get_super_block();
 
-        if disk_node.list_edges_offset == u64::MAX{
-            disk_node.list_edges_offset = {
-                let mut alloc = AllocatedStruct::new(&mut self.file_manager_edge_structure, &mut superblock, Some(&mut tx), FileId::Structure);
-                alloc.allocate_structure(&DISK_NODE_INITIAL_CAPACITY)
-            };
-
-            while disk_node.list_edges_offset + disk_node.capacity > self.file_manager_edge_structure.file_len().unwrap(){
-                tx.increase_file_size(FileId::Structure, self.file_manager_edge_structure.check_next_size(self.file_manager_edge_structure.file_len().unwrap()).unwrap());
-                self.file_manager_edge_structure.increase_file_size().unwrap();
+        if check_node_allocated(&disk_node, FileId::Structure).map_err(|e| { self.poison(); GraphError::from(e) })? {
+                allocated_disk_node(&mut disk_node, &mut self.file_manager_edge_structure, FileId::Structure, &mut superblock, &mut tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
             }
-            tx.zero_mmap(FileId::Structure, disk_node.list_edges_offset, disk_node.list_edges_offset + disk_node.capacity);
-            // We apply it immediately to mmap because otherwise subsequent steps in THIS tx might not work? No, write_disk_edge just writes bytes.
-        }
 
         let data_offset = superblock.get_free_block_data();
         let disk_edge: DiskEdge = DiskEdge::new(data_offset, std::mem::size_of::<W>() as u64, edge.get_target());
 
-        self.write_disk_edge(&mut disk_node, &disk_edge, &mut superblock, Some(&mut tx)).unwrap();
+        self.write_disk_edge(&mut disk_node, &disk_edge, &mut superblock, Some(&mut tx)).map_err(|e| {
+            self.poison();
+            GraphError::Db(e)
+        })?;
         
         let weight_data_bytes: &[u8] = edge.convert_to_bytes();
-        self.write_weight(weight_data_bytes, &data_offset, Some(&mut tx)).unwrap();
+        self.write_weight(weight_data_bytes, &data_offset, Some(&mut tx)).map_err(|e| {
+            self.poison();
+            GraphError::Db(e)
+        })?;
 
         superblock.next_data_free_block += weight_data_bytes.len() as u64;
         superblock.edge_count += 1;
         
         self.write_superblock(&superblock, Some(&mut tx));
 
-        self.wal_manager.commit(&tx).unwrap();
+        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
         self.apply_wal_transaction(&tx);
+        Ok(())
     }
 
     /// Adds multiple edges to nodes in bulk.
@@ -780,38 +864,33 @@ where
     ///
     /// # Panics
     /// Panics if disk writing or WAL commit fails.
-    fn bulk_add_edge_to_node(&mut self, edges: &[(u64, Edge<W>)]) -> Result<(), std::io::Error>{
+    fn bulk_add_edge_to_node(&mut self, edges: &[(u64, Edge<W>)]) -> Result<(), GraphError> {
+        self.check_poisoned()?;
         let mut tx = WalTransaction::new();
         let mut super_block = self.get_super_block();
 
         let mut seen_disk_node: HashMap<u64, DiskNode> = HashMap::new();
         for (node, edge) in edges{
-            if !seen_disk_node.contains_key(node){
-                let disk_node = self.get_disk_node(node);
-                seen_disk_node.insert(*node, disk_node);
-            }
-            let mut disk_node: DiskNode = *seen_disk_node.get(node).unwrap();
-
-            if disk_node.list_edges_offset == u64::MAX{
-                disk_node.list_edges_offset = {
-                    let mut alloc = AllocatedStruct::new(&mut self.file_manager_edge_structure, &mut super_block, Some(&mut tx), FileId::Structure);
-                    alloc.allocate_structure(&DISK_NODE_INITIAL_CAPACITY)
-                };
-
-                while disk_node.list_edges_offset + disk_node.capacity > self.file_manager_edge_structure.file_len().unwrap(){
-                    tx.increase_file_size(FileId::Structure, self.file_manager_edge_structure.check_next_size(self.file_manager_edge_structure.file_len()?)?);
-                    self.file_manager_edge_structure.increase_file_size().unwrap();
-                }
-                tx.zero_mmap(FileId::Structure, disk_node.list_edges_offset, disk_node.list_edges_offset + disk_node.capacity);
+            let mut disk_node = *seen_disk_node
+                .entry(*node)
+                .or_insert_with(|| self.get_disk_node(node));
+            if check_node_allocated(&disk_node, FileId::Structure).map_err(|e| { self.poison(); GraphError::from(e) })? {
+                allocated_disk_node(&mut disk_node, &mut self.file_manager_edge_structure, FileId::Structure, &mut super_block, &mut tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
             }
 
             let data_offset = super_block.get_free_block_data();
             let disk_edge: DiskEdge = DiskEdge::new(data_offset, std::mem::size_of::<W>() as u64, edge.get_target());
 
-            self.write_disk_edge(&mut disk_node, &disk_edge, &mut super_block, Some(&mut tx)).unwrap();
+            self.write_disk_edge(&mut disk_node, &disk_edge, &mut super_block, Some(&mut tx)).map_err(|e| {
+                self.poison();
+                GraphError::Db(e)
+            })?;
             
             let weight_data_bytes: &[u8] = edge.convert_to_bytes();
-            self.write_weight(weight_data_bytes, &data_offset, Some(&mut tx)).unwrap();
+            self.write_weight(weight_data_bytes, &data_offset, Some(&mut tx)).map_err(|e| {
+                self.poison();
+                GraphError::Db(e)
+            })?;
 
             super_block.next_data_free_block += weight_data_bytes.len() as u64;
             super_block.edge_count += 1;
@@ -824,7 +903,7 @@ where
         if !tx.records.is_empty() {
             self.write_superblock(&super_block, Some(&mut tx));
 
-            self.wal_manager.commit(&tx).unwrap();
+            self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
             self.apply_wal_transaction(&tx);
         }
         Ok(())
@@ -864,24 +943,27 @@ where
     /// The removed [`Edge`] (**owned**) on succes
     ///
     /// # Error
-    /// If the edge doesnt exist it will return [`GraphErrors::EdgeDoesntExists`]
+    /// If the edge doesnt exist it will return [`GraphError::EdgeDoesntExist`]
     ///
     /// # Panics
     /// Panics if `source` is out of bounds
-    fn remove_edge(&mut self, source: &u64, edge: &Edge<W>) -> Result<Edge<W>, GraphErrors> {
+    fn remove_edge(&mut self, source: &u64, edge: &Edge<W>) -> Result<Edge<W>, GraphError> {
+        self.check_poisoned()?;
         let edges = self.get_edges(source);
         let mut super_block: SuperBlock = self.get_super_block();
 
         if let Some((idk, found_edge)) = edges.enumerate().find(|(_, e)| e.get_target()== edge.get_target() && edge.get_weight() == e.get_weight()){
             let mut disk_node: DiskNode = self.get_disk_node(source);
             let mut tx = WalTransaction::new();
-            self.swap_remove_disk_edge(&mut disk_node, &(idk as u64), &mut super_block, Some(&mut tx)).unwrap();
+            self.swap_remove_disk_edge(&mut disk_node, &(idk as u64), &mut super_block, Some(&mut tx))
+                .map_err(|e| { self.poison(); GraphError::from(e) })?;
             self.write_superblock(&super_block, Some(&mut tx));
-            self.wal_manager.commit(&tx).unwrap();
+            self.wal_manager.commit(&tx)
+                .map_err(|e| { self.poison(); GraphError::from(e) })?;
             self.apply_wal_transaction(&tx);
             return Ok(found_edge);
         }
-        Err(GraphErrors::EdgeDoesntExists)
+        Err(GraphError::EdgeDoesntExist)
     }
 
 
@@ -892,7 +974,8 @@ where
     ///
     /// # Panics
     /// Panics if `source` is out of bounds
-    fn bulk_remove_edge(&mut self, edges: &[(u64, Edge<W>)]) {
+    fn bulk_remove_edge(&mut self, edges: &[(u64, Edge<W>)]) -> Result<(), GraphError> {
+        self.check_poisoned()?;
         let mut seen_disk_node: HashMap<u64, DiskNode> = HashMap::with_capacity(edges.len()/2);
         let mut super_block: SuperBlock = self.get_super_block();
         let mut tx = WalTransaction::new();
@@ -901,21 +984,21 @@ where
             let edges = self.get_edges(source);
 
             if let Some((index, _)) = edges.enumerate().find(|(_, e)| e.get_target() == edge.get_target() && e.get_weight() == edge.get_weight()){
-                let mut disk_node: DiskNode;
-                if !seen_disk_node.contains_key(source){
-                    disk_node = self.get_disk_node(source);
-                    seen_disk_node.insert(*source, disk_node);
-                }else{
-                    disk_node = *seen_disk_node.get(source).unwrap();
-                }
-                
-                self.swap_remove_disk_edge(&mut disk_node, &(index as u64),&mut super_block, Some(&mut tx)).unwrap();
+                let mut disk_node = *seen_disk_node
+                    .entry(*source)
+                    .or_insert_with(|| self.get_disk_node(source));                
+                self.swap_remove_disk_edge(&mut disk_node, &(index as u64),&mut super_block, Some(&mut tx))
+                    .map_err(|e| {
+                        self.poison();
+                        GraphError::Db(e)
+                    })?;
                 seen_disk_node.insert(*source, disk_node);
             }
         }
-        self.write_superblock(&mut super_block, Some(&mut tx));
-        self.wal_manager.commit(&tx);
+        self.write_superblock(&super_block, Some(&mut tx));
+        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
         self.apply_wal_transaction(&tx);
+        Ok(())
     }
 
     /// Removes an edge matching a specific condition.
@@ -924,37 +1007,39 @@ where
     /// Uses swap-remove to delete the edge on disk, writes to the WAL, and commits.
     ///
     /// # Errors
-    /// Returns `GraphErrors::EdgeDoesntExists` if the edge is not found.
+    /// Returns `GraphError::EdgeDoesntExist` if the edge is not found.
     ///
     /// # Panics
     /// Panics on file I/O or WAL commit failure.
-    fn remove_edge_by_property<F>(&mut self, source: &u64, edge: &Edge<W>, func: F) -> Result<Edge<W>, crate::GraphErrors>
+    fn remove_edge_by_property<F>(&mut self, source: &u64, edge: &Edge<W>, func: F) -> Result<Edge<W>, GraphError>
         where
            F: Fn(&Edge<W>, &Edge<W>) -> bool {
-
+        self.check_poisoned()?;
         let edges = self.get_edges(source);
         let mut super_block: SuperBlock = self.get_super_block();
 
         if let Some((idk, found_edge)) = edges.enumerate().find(|(_,e)| func(e, edge)){
             let mut disk_node: DiskNode = self.get_disk_node(source);
             let mut tx = WalTransaction::new();
-            self.swap_remove_disk_edge(&mut disk_node, &(idk as u64), &mut super_block, Some(&mut tx)).unwrap();
-            self.write_superblock(&mut super_block, Some(&mut tx));
-            self.wal_manager.commit(&tx).unwrap();
+            self.swap_remove_disk_edge(&mut disk_node, &(idk as u64), &mut super_block, Some(&mut tx))
+                .map_err(|e| { self.poison(); GraphError::from(e) })?;
+            self.write_superblock(&super_block, Some(&mut tx));
+            self.wal_manager.commit(&tx)
+                .map_err(|e| { self.poison(); GraphError::from(e) })?;
             self.apply_wal_transaction(&tx);
             return Ok(found_edge);
         }
-        Err(GraphErrors::EdgeDoesntExists)
+        Err(GraphError::EdgeDoesntExist)
     }
 
     /// Checks if a directed edge exists from `source` to `target`.
     ///
     /// # Errors
-    /// Returns `GraphErrors::EdgeDoesntExists` if no such edge exists.
+    /// Returns `GraphError::EdgeDoesntExist` if no such edge exists.
     ///
     /// # Panics
     /// Panics if memory reads go out of bounds.
-    fn contains_edge(&self, source: &u64, target: &u64) -> Result<Edge<W>, crate::GraphErrors> {
+    fn contains_edge(&self, source: &u64, target: &u64) -> Result<Edge<W>, GraphError> {
         let _disk_node: DiskNode = self.get_disk_node(source);
 
         let edges = self.get_edges(source);
@@ -965,7 +1050,7 @@ where
             }
         }
 
-        Err(crate::GraphErrors::EdgeDoesntExists)
+        Err(crate::core::graph_errors::GraphError::EdgeDoesntExist)
     }
 
     /// Returns the global count of nodes.
@@ -998,13 +1083,15 @@ where
     ///
     /// # Panics
     /// Panics if disk writing or WAL commit fails.
-    fn increment_node_counter(&mut self) {
+    fn increment_node_counter(&mut self) -> Result<(), GraphError> {
+        self.check_poisoned()?;
         let mut tx = WalTransaction::new();
         let mut super_block = self.get_super_block();
         super_block.increment_node_counter();
         self.write_superblock(&super_block, Some(&mut tx));
-        self.wal_manager.commit(&tx).unwrap();
+        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
         self.apply_wal_transaction(&tx);
+        Ok(())
     }
 
     /// Clears all edges from a specific node.
@@ -1017,12 +1104,14 @@ where
     ///
     /// # Panics
     /// Panics on file I/O or WAL commit failure.
-    fn clear_node_edges(&mut self, node: &u64) {
+    fn clear_node_edges(&mut self, node: &u64) -> Result<(), GraphError> {
+        self.check_poisoned()?;
         let mut tx = WalTransaction::new();
         let mut disk_node = self.get_disk_node(node);
-        self.remove_edges_from_node(&mut disk_node, Some(&mut tx)).unwrap();
-        self.wal_manager.commit(&tx).unwrap();
+        self.remove_edges_from_node(&mut disk_node, Some(&mut tx)).map_err(|e| { self.poison();  GraphError::Db(e)})?;
+        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
         self.apply_wal_transaction(&tx);
+        Ok(())
     }
 
     /// Removes an edge based on its target node.
@@ -1035,7 +1124,8 @@ where
     ///
     /// # Panics
     /// Panics on file I/O or WAL commit failure.
-    fn remove_edge_by_target(&mut self, source: &u64, target: &u64) {
+    fn remove_edge_by_target(&mut self, source: &u64, target: &u64) -> Result<(), GraphError> {
+        self.check_poisoned()?;
         let mut disk_node: DiskNode = self.get_disk_node(source);
         let mut super_block: SuperBlock = self.get_super_block();
 
@@ -1048,13 +1138,17 @@ where
 
             if disk_edge.node == *target{
                 let mut tx = WalTransaction::new();
-                self.swap_remove_disk_edge(&mut disk_node, &(edge_number), &mut super_block, Some(&mut tx)).unwrap();
+                self.swap_remove_disk_edge(&mut disk_node, &(edge_number), &mut super_block, Some(&mut tx)).map_err(|e| {
+                        self.poison();
+                        GraphError::Db(e)
+                    })?;
                 self.write_superblock(&super_block, Some(&mut tx));
-                self.wal_manager.commit(&tx).unwrap();
+                self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
                 self.apply_wal_transaction(&tx);
-                return;
+                return Ok(());
             }
         }
+        Ok(())
     }
 
     /// Adds a reverse edge pointing back to the origin node.
@@ -1067,31 +1161,24 @@ where
     ///
     /// # Panics
     /// Panics if disk writing or WAL commit fails.
-    fn add_reverse_edge(&mut self, source: &u64, origin: &u64) {
+    fn add_reverse_edge(&mut self, source: &u64, origin: &u64) -> Result<(), GraphError> {
+        self.check_poisoned()?;
         let mut tx = WalTransaction::new();
         let mut disk_node: DiskNode = self.get_disk_node(source);
         let mut superblock: SuperBlock = self.get_super_block();
 
         // First-time initialization: allocate a reverse edge block for this node
-        if disk_node.list_reverse_edges_offset == u64::MAX {
-            disk_node.list_reverse_edges_offset = {
-                let mut alloc = AllocatedStruct::new(&mut self.file_manager_reverse_edge, &mut superblock, Some(&mut tx), FileId::Reverse);
-                alloc.allocate_structure(&DISK_NODE_INITIAL_CAPACITY)
-            };
-
-            while disk_node.list_reverse_edges_offset + disk_node.reverse_capacity > self.file_manager_reverse_edge.file_len().unwrap() {
-                tx.increase_file_size(FileId::Reverse, self.file_manager_reverse_edge.check_next_size(self.file_manager_reverse_edge.file_len().unwrap()).unwrap());
-                self.file_manager_reverse_edge.increase_file_size().unwrap();
-            }
-            tx.zero_mmap(FileId::Reverse, disk_node.list_reverse_edges_offset, disk_node.list_reverse_edges_offset + disk_node.reverse_capacity);
+        if check_node_allocated(&disk_node, FileId::Reverse).map_err(|e| { self.poison(); GraphError::from(e) })? {
+            allocated_disk_node(&mut disk_node, &mut self.file_manager_reverse_edge, FileId::Reverse, &mut superblock, &mut tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
         }
 
         // Check if adding this reverse edge would overflow the allocated capacity
-        self.write_reverse_edge(&mut disk_node, origin, &mut superblock, Some(&mut tx));
+        self.write_reverse_edge(&mut disk_node, origin, &mut superblock, Some(&mut tx)).map_err(|e| { self.poison(); GraphError::Db(e) })?;
         self.write_superblock(&superblock, Some(&mut tx));
         
-        self.wal_manager.commit(&tx).unwrap();
+        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
         self.apply_wal_transaction(&tx);
+        Ok(())
     }
 
     /// Adds multiple reverse edges in bulk.
@@ -1104,44 +1191,33 @@ where
     ///
     /// # Panics
     /// Panics if disk writing or WAL commit fails.
-    fn bulk_add_reverse_edge(&mut self, edges: &[(u64, u64, W)]) {
+    fn bulk_add_reverse_edge(&mut self, edges: &[(u64, u64, W)]) -> Result<(), GraphError> {
+        self.check_poisoned()?;
         let mut tx = WalTransaction::new();
         let mut super_block = self.get_super_block();
         let mut seen_disk_node: HashMap<u64, DiskNode> = HashMap::with_capacity(edges.len());
 
         for (source, target, _) in edges{
-            let mut disk_node: DiskNode;
-            if !seen_disk_node.contains_key(target){
-                disk_node = self.get_disk_node(target);
-                seen_disk_node.insert(*target, disk_node);
-            }else{
-                disk_node = *seen_disk_node.get(target).unwrap();
+            let mut disk_node = *seen_disk_node
+                .entry(*source)
+                .or_insert_with(|| self.get_disk_node(source));
+            if check_node_allocated(&disk_node, FileId::Reverse).map_err(|e| { self.poison(); GraphError::from(e) })? {
+                allocated_disk_node(&mut disk_node, &mut self.file_manager_reverse_edge, FileId::Reverse, &mut super_block, &mut tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
             }
 
-            if disk_node.list_reverse_edges_offset == u64::MAX {
-                disk_node.list_reverse_edges_offset = {
-                    let mut alloc = AllocatedStruct::new(&mut self.file_manager_reverse_edge,
-                        &mut super_block,
-                        Some(&mut tx),
-                        FileId::Reverse);
-                    alloc.allocate_structure(&DISK_NODE_INITIAL_CAPACITY)
-                };
-
-                while disk_node.list_reverse_edges_offset + disk_node.reverse_capacity > self.file_manager_reverse_edge.file_len().unwrap() {
-                    tx.increase_file_size(FileId::Reverse, self.file_manager_reverse_edge.check_next_size(self.file_manager_reverse_edge.file_len().unwrap()).unwrap());
-                    self.file_manager_reverse_edge.increase_file_size().unwrap();
-                }
-                tx.zero_mmap(FileId::Reverse, disk_node.list_reverse_edges_offset, disk_node.list_reverse_edges_offset + disk_node.reverse_capacity);
-            }
-
-            self.write_reverse_edge(&mut disk_node, source, &mut super_block, Some(&mut tx));
+            self.write_reverse_edge(&mut disk_node, source, &mut super_block, Some(&mut tx))
+                .map_err(|e|{ 
+                    self.poison(); 
+                    GraphError::Db(e)
+                })?;
             
             seen_disk_node.insert(*target, disk_node);
-        }
+        };
         self.write_superblock(&super_block, Some(&mut tx));
 
-        self.wal_manager.commit(&tx).unwrap();
+        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
         self.apply_wal_transaction(&tx);
+        Ok(())
     }
 
     /// Retrieves all reverse edges (origins) for a specific node.
@@ -1166,10 +1242,11 @@ where
     ///
     /// # Panics
     /// Panics on file I/O or WAL commit failure.
-    fn clear_reverse_edges(&mut self, node: &u64) {
+    fn clear_reverse_edges(&mut self, node: &u64) -> Result<(), GraphError> {
+        self.check_poisoned()?;
         let mut disk_node: DiskNode = self.get_disk_node(node);
         if disk_node.number_of_reverse_edges == 0{
-            return;
+            return Ok(());
         }
 
         let mut tx = WalTransaction::new();
@@ -1179,9 +1256,10 @@ where
         tx.zero_mmap(FileId::Reverse, start, end);
 
         disk_node.number_of_reverse_edges = 0;
-        self.write_disk_node(&disk_node, Some(&mut tx)).unwrap();
-        self.wal_manager.commit(&tx).unwrap();
+        self.write_disk_node(&disk_node, Some(&mut tx)).map_err(|e| { self.poison(); GraphError::Db(e)})?;
+        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
         self.apply_wal_transaction(&tx);
+        Ok(())
     }
 
     /// Removes a specific reverse edge from a node.
@@ -1194,11 +1272,12 @@ where
     ///
     /// # Panics
     /// Panics on file I/O or WAL commit failure, or if byte conversion fails.
-    fn remove_reverse_edge(&mut self, source: &u64, origin: &u64) {
+    fn remove_reverse_edge(&mut self, source: &u64, origin: &u64) -> Result<(), GraphError> {
+        self.check_poisoned()?;
         let mut disk_node: DiskNode = self.get_disk_node(source);
 
-        if disk_node.list_reverse_edges_offset == u64::MAX {
-            return;
+        if check_node_allocated(&disk_node, FileId::Reverse).map_err(|e| { self.poison(); GraphError::from(e) })? {
+            return Ok(());
         }
 
         for i in 0..disk_node.number_of_reverse_edges {
@@ -1208,16 +1287,22 @@ where
 
             if current_origin == *origin {
                 let mut tx = WalTransaction::new();
-                self.swap_remove_disk_reverse_edge(&mut disk_node, &i, Some(&mut tx)).unwrap();
-                self.wal_manager.commit(&tx).unwrap();
+                self.swap_remove_disk_reverse_edge(&mut disk_node, &i, Some(&mut tx))
+                    .map_err(|e| { 
+                        self.poison();
+                        GraphError::Db(e)
+                    })?;
+                self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
                 self.apply_wal_transaction(&tx);
-                return;
+                return Ok(());
             }
         }
+        Ok(())
     }
 
-    fn bulk_remove_reverse_edge(&mut self, edges: &[(u64, u64)]) {
-        if edges.is_empty() { return; }
+    fn bulk_remove_reverse_edge(&mut self, edges: &[(u64, u64)]) -> Result<(), GraphError> {
+        self.check_poisoned()?;
+        if edges.is_empty() { return Ok(()); }
 
         let mut sorted_edges = edges.to_vec();
         sorted_edges.sort_unstable_by_key(|&(source, _)| source);
@@ -1248,7 +1333,7 @@ where
                 );
 
                 if let Some(pos) = origins_to_remove.iter().position(|r| *r == current_origin) {
-                    indices_to_remove.push(i as u64);
+                    indices_to_remove.push(i);
                     origins_to_remove.swap_remove(pos);
                 }
                 if origins_to_remove.is_empty() {
@@ -1259,12 +1344,17 @@ where
             indices_to_remove.sort_unstable_by(|a, b| b.cmp(a));
 
             for index in indices_to_remove {
-                self.swap_remove_disk_reverse_edge(&mut disk_node, &index, Some(&mut tx)).unwrap();
+                self.swap_remove_disk_reverse_edge(&mut disk_node, &index, Some(&mut tx))
+                    .map_err(|e|{
+                        self.poison();
+                        GraphError::Db(e)
+                    })?;
             }
         }
 
-        self.wal_manager.commit(&tx).unwrap();
+        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
         self.apply_wal_transaction(&tx);
+        Ok(())
     }
 
     /// Marks a node ID as free, adding it to the free list.
@@ -1278,7 +1368,8 @@ where
     ///
     /// # Panics
     /// Panics on file I/O or WAL commit failure.
-    fn free_node_id(&mut self, node_id: &u64) {
+    fn free_node_id(&mut self, node_id: &u64) -> Result<(), GraphError> {
+        self.check_poisoned()?;
         let mut tx = WalTransaction::new();
         let mut superblock = self.get_super_block();
         let head = superblock.next_free_node();
@@ -1288,16 +1379,12 @@ where
         let bytes = disk_node.convert_to_bytes();
         tx.write_bytes(FileId::Node, offset, bytes);
 
-        superblock.node_count += 1;
-
-        self.write_superblock(&superblock, Some(&mut tx));
-
         superblock.change_header(node_id);
+        superblock.node_count -= 1;
         self.write_superblock(&superblock, Some(&mut tx));
         
-        self.wal_manager.commit(&tx).unwrap();
+        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
         self.apply_wal_transaction(&tx);
+        Ok(())
     }
 }
-
-

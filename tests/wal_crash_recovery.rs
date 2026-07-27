@@ -23,10 +23,10 @@ fn test_wal_crash_recovery() {
     // 1. Start a fresh database and add some initial data via the backend directly.
     {
         let mut backend = DiskStorage::<u32>::new(&dir);
-        let n1 = backend.add_node();
-        let n2 = backend.add_node();
+        let n1 = backend.add_node().unwrap();
+        let n2 = backend.add_node().unwrap();
         let edge = Edge::new(n2, &42);
-        backend.add_edge_to_node(&n1, &edge);
+        backend.add_edge_to_node(&n1, &edge).unwrap();
         
         assert_eq!(backend.edge_count(), 1);
         assert_eq!(backend.node_count(), 2);
@@ -54,9 +54,9 @@ fn test_wal_crash_recovery() {
         assert_eq!(backend.node_count(), 2);
         
         // Add more edges to prove it's still healthy
-        let n3 = backend.add_node();
+        let n3 = backend.add_node().unwrap();
         let edge2 = Edge::new(n3, &99);
-        backend.add_edge_to_node(&1, &edge2);
+        backend.add_edge_to_node(&1, &edge2).unwrap();
         assert_eq!(backend.edge_count(), 2);
     }
 }

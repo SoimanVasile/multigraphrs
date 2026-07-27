@@ -1,4 +1,4 @@
-use multigraphrs::{Directed, GraphErrors, MultiGraph, Undirected, Weighted, WeightedDirected};
+use multigraphrs::{Directed, GraphError, MultiGraph, Undirected, Weighted, WeightedDirected};
 
 // ───────────────────────────────────────────────────────────────────────────
 // 1. Basic ID reuse: remove a node, add a new one, the slot gets recycled
@@ -539,7 +539,7 @@ fn cannot_add_duplicate_without_removal() {
 
     g.add_node("A").unwrap();
     // Without removing, should fail
-    assert_eq!(g.add_node("A"), Err(GraphErrors::NodeAlreadyExists));
+    assert_eq!(g.add_node("A"), Err(GraphError::NodeAlreadyExists));
 }
 
 // ───────────────────────────────────────────────────────────────────────────
