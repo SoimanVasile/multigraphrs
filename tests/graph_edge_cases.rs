@@ -18,5 +18,5 @@ fn test_adding_existing_node_error() {
     let mut graph = multigraphrs::RamMultiGraph::<u32, u32, Directed>::with_backend(multigraphrs::storage::adjacency_list::RamStorage::new());
     graph.add_node(1).unwrap();
     let err = graph.add_node(1).unwrap_err();
-    assert_eq!(err, multigraphrs::GraphErrors::NodeAlreadyExists);
+    assert_eq!(err, multigraphrs::GraphError::NodeAlreadyExists);
 }

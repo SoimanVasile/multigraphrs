@@ -1,4 +1,4 @@
-use multigraphrs::{Directed, GraphErrors, MultiGraph, Undirected, Weighted, WeightedDirected};
+use multigraphrs::{Directed, GraphError, MultiGraph, Undirected, Weighted, WeightedDirected};
 
 // --- Directed ---
 
@@ -103,25 +103,25 @@ fn neighbours_weighted_basic() {
 #[test]
 fn neighbours_nonexistent_node_directed() {
     let g = MultiGraph::<u32, u32, Directed>::new();
-    assert_eq!(g.get_neighbours(&999), Err(GraphErrors::NodeNotFound));
+    assert_eq!(g.get_neighbours(&999), Err(GraphError::NodeNotFound));
 }
 
 #[test]
 fn neighbours_nonexistent_node_undirected() {
     let g = MultiGraph::<u32, u32, Undirected>::new();
-    assert_eq!(g.get_neighbours(&1), Err(GraphErrors::NodeNotFound));
+    assert_eq!(g.get_neighbours(&1), Err(GraphError::NodeNotFound));
 }
 
 #[test]
 fn neighbours_nonexistent_node_weighted() {
     let g = MultiGraph::<u32, f64, Weighted>::new();
-    assert_eq!(g.get_neighbours(&1), Err(GraphErrors::NodeNotFound));
+    assert_eq!(g.get_neighbours(&1), Err(GraphError::NodeNotFound));
 }
 
 #[test]
 fn neighbours_nonexistent_node_weighted_directed() {
     let g = MultiGraph::<u32, f64, WeightedDirected>::new();
-    assert_eq!(g.get_neighbours(&1), Err(GraphErrors::NodeNotFound));
+    assert_eq!(g.get_neighbours(&1), Err(GraphError::NodeNotFound));
 }
 
 // --- After remove_node ---

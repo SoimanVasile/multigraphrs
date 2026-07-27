@@ -14,13 +14,13 @@ fn test_debug_reverse_edges() {
     
     // Add nodes 0 to 200
     for i in 0..=200 {
-        backend.add_node();
+        backend.add_node().unwrap();
     }
     
     // Edges from 61..=210 to 60
     for i in 61..=210 {
         // We will just use public api
-        backend.add_reverse_edge(&60, &i);
+        backend.add_reverse_edge(&60, &i).unwrap();
     }
     
     // Verify Reverse Edges
