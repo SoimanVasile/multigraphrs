@@ -52,7 +52,7 @@ impl DirectionStrategy<u32> for Directed
             edges.push((*source, edge));
         }
         graph.bulk_add_edge_to_node(&edges)?;
-        graph.bulk_add_reverse_edge(&hashed_nodes)?;
+        graph.bulk_add_reverse_edge(hashed_nodes)?;
 
         Ok(())
     }

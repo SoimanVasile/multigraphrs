@@ -84,9 +84,9 @@ fn check_node_allocated(disk_node: &DiskNode, file_id: FileId) -> Result<bool, D
 ///
 /// # Panics
 /// Panics if the underlying memory allocation fails.
-fn allocate_memory(file_manager: &mut FileManager, super_block: &mut SuperBlock, mut tx: Option<&mut WalTransaction>, file_id: FileId, size: u64) -> u64{
+fn allocate_memory(file_manager: &mut FileManager, super_block: &mut SuperBlock, tx: Option<&mut WalTransaction>, file_id: FileId, size: u64) -> u64{
     
-        let mut alloc = AllocatedStruct::new(file_manager, super_block, tx.as_deref_mut(), file_id);
+        let mut alloc = AllocatedStruct::new(file_manager, super_block, tx, file_id);
         alloc.allocate_structure(&size)
 }
 
@@ -525,7 +525,6 @@ where
     ///
     /// # Panics
     /// Panics if the superblock bytes exceed the node memory map bounds.
-
     /// Clears all edges from a node by zeroing its edge region on disk
     /// and resetting the edge count to 0.
     ///
@@ -802,7 +801,7 @@ where
             })?;
         }
 
-        self.write_superblock(&mut super_block, Some(&mut tx));
+        self.write_superblock(&super_block, Some(&mut tx));
 
         self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
         self.apply_wal_transaction(&tx);
@@ -996,7 +995,7 @@ where
                 seen_disk_node.insert(*source, disk_node);
             }
         }
-        self.write_superblock(&mut super_block, Some(&mut tx));
+        self.write_superblock(&super_block, Some(&mut tx));
         self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
         self.apply_wal_transaction(&tx);
         Ok(())
@@ -1024,7 +1023,7 @@ where
             let mut tx = WalTransaction::new();
             self.swap_remove_disk_edge(&mut disk_node, &(idk as u64), &mut super_block, Some(&mut tx))
                 .map_err(|e| { self.poison(); GraphError::from(e) })?;
-            self.write_superblock(&mut super_block, Some(&mut tx));
+            self.write_superblock(&super_block, Some(&mut tx));
             self.wal_manager.commit(&tx)
                 .map_err(|e| { self.poison(); GraphError::from(e) })?;
             self.apply_wal_transaction(&tx);
@@ -1334,7 +1333,7 @@ where
                 );
 
                 if let Some(pos) = origins_to_remove.iter().position(|r| *r == current_origin) {
-                    indices_to_remove.push(i as u64);
+                    indices_to_remove.push(i);
                     origins_to_remove.swap_remove(pos);
                 }
                 if origins_to_remove.is_empty() {

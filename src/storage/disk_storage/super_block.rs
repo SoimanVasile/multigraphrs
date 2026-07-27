@@ -196,7 +196,7 @@ impl SuperBlock {
     /// # Panics
     /// Panics if `i` is out of bounds for the `header_reverse_structure` array.
     pub fn get_ith_header_reverse_structure(&self, i: &u64) -> u64{
-        return self.header_reverse_structure[*i as usize];
+        self.header_reverse_structure[*i as usize]
     }
 
     /// Returns the `i`-th header value for `structure.bin`.
@@ -207,7 +207,7 @@ impl SuperBlock {
     /// # Panics
     /// Panics if `i` is out of bounds for the `header_structure` array.
     pub fn get_ith_header_structure(&self, i: &u64) -> u64{
-        return self.header_structure[*i as usize]
+        self.header_structure[*i as usize]
     }
 
     /// Returns the index of the next free node from the linked list.

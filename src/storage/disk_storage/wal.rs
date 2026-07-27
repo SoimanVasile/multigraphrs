@@ -56,6 +56,12 @@ pub struct WalTransaction {
     pub records: Vec<WalRecord>,
 }
 
+impl Default for WalTransaction{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WalTransaction {
     /// Creates a new, empty `WalTransaction`.
     ///
@@ -297,7 +303,6 @@ impl WalManager {
     pub fn new(path: PathBuf) -> Result<Self, DbError> {
         let file = OpenOptions::new()
             .read(true)
-            .write(true)
             .create(true)
             .append(true)
             .open(path)?;

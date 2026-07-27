@@ -152,22 +152,7 @@ where
             }
 
             if non_existing_nodes.len() >= MAX_CAPACITY_BULK{
-                let mut nodes_id = self.adjacency_list.bulk_add_node(&(non_existing_nodes.len() as u64))?;
-
-                nodes_id.sort();
-                let nodes_id: Vec<u64> = nodes_id.into_iter().scan(None, |previous, curr|{
-                    if let Some(prev) = *previous{
-                        if prev == curr{
-                            None
-                        }else{
-                            *previous = Some(curr);
-                            Some(curr)
-                        }
-                    }else{
-                        *previous = Some(curr);
-                        Some(curr)
-                    }
-                }).collect();
+                let nodes_id = self.adjacency_list.bulk_add_node(&(non_existing_nodes.len() as u64))?;
 
                 let max = nodes_id.iter().max().unwrap();
 
@@ -188,7 +173,7 @@ where
 
         seen_in_batch.clear();
 
-        if non_existing_nodes.len() != 0{
+        if !non_existing_nodes.is_empty(){
 
             let nodes_id = self.adjacency_list.bulk_add_node(&(non_existing_nodes.len() as u64))?;
 
@@ -356,6 +341,16 @@ where
     }
 }
 
+impl<K, W> Default for MultiGraph<K, W, Weighted, RamStorage<W>>
+where
+    K: Eq + Hash + Clone,
+    W: Clone + std::cmp::PartialEq
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<K, W, B> MultiGraph<K, W, Weighted, B>
 where
     K: Eq + Hash + Clone,
@@ -400,7 +395,7 @@ where
 
         for (source, target, weight) in edges{
             if hashed_edges.len() >= MAX_CAPACITY_BULK{
-                let _ = Weighted::bulk_add_edge(&mut self.adjacency_list, &hashed_edges)?;
+                Weighted::bulk_add_edge(&mut self.adjacency_list, &hashed_edges)?;
                 hashed_edges.clear();
             }
 
@@ -417,8 +412,8 @@ where
             hashed_edges.push((*source_hashed, *target_hashed, weight.clone()));
         }
 
-        if hashed_edges.len() != 0{
-            let _ = Weighted::bulk_add_edge(&mut self.adjacency_list, &hashed_edges)?;
+        if !hashed_edges.is_empty(){
+            Weighted::bulk_add_edge(&mut self.adjacency_list, &hashed_edges)?;
         }
 
         Ok(())
@@ -446,7 +441,7 @@ where
             hashed_edges.push((*source_hashed, *target_hashed, weight.clone()));
         }
 
-        if hashed_edges.len() != 0{
+        if !hashed_edges.is_empty(){
             Weighted::bulk_remove_edge(&mut self.adjacency_list, &hashed_edges)?;
         }
 
@@ -532,7 +527,7 @@ where
 
         for (source, target, weight) in edges{
             if hashed_edges.len() >= MAX_CAPACITY_BULK{
-                let _ = WeightedDirected::bulk_add_edge(&mut self.adjacency_list, &hashed_edges)?;
+                WeightedDirected::bulk_add_edge(&mut self.adjacency_list, &hashed_edges)?;
                 hashed_edges.clear();
             }
 
@@ -549,8 +544,8 @@ where
             hashed_edges.push((*source_hashed, *target_hashed, weight.clone()));
         }
 
-        if hashed_edges.len() != 0{
-            let _ = WeightedDirected::bulk_add_edge(&mut self.adjacency_list, &hashed_edges)?;
+        if !hashed_edges.is_empty(){
+            WeightedDirected::bulk_add_edge(&mut self.adjacency_list, &hashed_edges)?;
             hashed_edges.clear();
         }
 
@@ -651,16 +646,16 @@ where
         for (source, target) in edges{
 
             if hashed_edges.len() >= MAX_CAPACITY_BULK{
-                let _ = Directed::bulk_add_edge(&mut self.adjacency_list, &hashed_edges)?;
+                Directed::bulk_add_edge(&mut self.adjacency_list, &hashed_edges)?;
                 hashed_edges.clear();
             }
             
-            let source_hashed = match self.hashed_nodes.get(&source){
+            let source_hashed = match self.hashed_nodes.get(source){
                 Some(t) => t,
                 None => continue,
             };
 
-            let target_hashed = match self.hashed_nodes.get(&target){
+            let target_hashed = match self.hashed_nodes.get(target){
                 Some(t) => t,
                 None => continue,
             };
@@ -668,8 +663,8 @@ where
             hashed_edges.push((*source_hashed, *target_hashed, 1u32));
         }
 
-        if hashed_edges.len() != 0{
-            let _ = Directed::bulk_add_edge(&mut self.adjacency_list, &hashed_edges)?;
+        if !hashed_edges.is_empty(){
+            Directed::bulk_add_edge(&mut self.adjacency_list, &hashed_edges)?;
         }
         Ok(())
     }
@@ -724,7 +719,7 @@ where
             hashed_edges.push((*source_hashed, *target_hashed, 1));
         }
 
-        if hashed_edges.len() != 0{
+        if !hashed_edges.is_empty(){
             Directed::bulk_remove_edge(&mut self.adjacency_list, &hashed_edges)?;
         }
 
@@ -784,7 +779,7 @@ where
         let mut hashed_nodes : Vec<(u64, u64, u32)> = Vec::with_capacity(MAX_CAPACITY_BULK);
         for (source, target) in edges{
             if hashed_nodes.len() >= MAX_CAPACITY_BULK{
-                let _ = Undirected::bulk_add_edge(&mut self.adjacency_list, &hashed_nodes)?;
+                Undirected::bulk_add_edge(&mut self.adjacency_list, &hashed_nodes)?;
                 hashed_nodes.clear();
             }
 
@@ -801,8 +796,8 @@ where
             hashed_nodes.push((*source_hashed, *target_hashed, 1));
         }
 
-        if hashed_nodes.len() != 0{
-            let _ = Undirected::bulk_add_edge(&mut self.adjacency_list, &hashed_nodes)?;
+        if !hashed_nodes.is_empty(){
+            Undirected::bulk_add_edge(&mut self.adjacency_list, &hashed_nodes)?;
         }
 
         Ok(())
@@ -830,7 +825,7 @@ where
             hashed_edges.push((*source_hashed, *target_hashed, 1));
         }
 
-        if hashed_edges.len() != 0{
+        if !hashed_edges.is_empty(){
             Undirected::bulk_remove_edge(&mut self.adjacency_list, &hashed_edges)?;
         }
 
