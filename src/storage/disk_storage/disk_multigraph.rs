@@ -19,6 +19,7 @@ use crate::storage::disk_storage::file_manager::FileManager;
 use crate::storage::disk_storage::wal::{WalManager, WalTransaction, WalRecord, FileId};
 
 const SUPER_BLOCK_SIZE: usize = 1024;
+const WAL_BIN_MAX_FILE_SIZE: u64 = 1024 * 1024 * 1024;
 
 
 /// allocates memory for the edges on the respective file_manager
@@ -257,11 +258,14 @@ where
         let (mut file_data, _) = FileManager::new(data_path)
             .expect("Failed to open the file_data");
 
-        let mut wal_manager = WalManager::new(dir.join("wal.bin"))
-            .expect("Failed to open wal.bin");
+        let mut wal_manager = WalManager::new(dir.to_path_buf())
+            .expect("Failed to initialize WalManager");
             
         wal_manager.replay(&mut file_node, &mut file_structure, &mut file_reverse, &mut file_data)
             .expect("Failed to replay WAL transactions on startup");
+
+        wal_manager.start(WAL_BIN_MAX_FILE_SIZE)
+            .expect("Failed to start WAL background thread");
 
         if node_file_created{
             let initial_super_block = SuperBlock::new();
@@ -278,6 +282,17 @@ where
             is_poisoned: AtomicBool::new(false),
             _marker: PhantomData::<W>
         }
+    }
+
+    fn commit_and_flush(&mut self, tx: &WalTransaction) -> Result<(), std::io::Error> {
+        let rotated = self.wal_manager.commit(tx)?;
+        if rotated {
+            self.file_manager_node.flush()?;
+            self.file_manager_edge_structure.flush()?;
+            self.file_manager_reverse_edge.flush()?;
+            self.file_manager_weight_data.flush()?;
+        }
+        Ok(())
     }
 
     /// Loads a copy of the [`SuperBlock`] from the start of the node memory map.
@@ -768,8 +783,7 @@ where
         self.write_superblock(&superblock, Some(&mut tx));
 
         // Commit to WAL and then flush to actual mmap
-        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
 
         Ok(new_node_id)
     }
@@ -803,8 +817,7 @@ where
 
         self.write_superblock(&super_block, Some(&mut tx));
 
-        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
         Ok(new_ids)
     }
 
@@ -848,8 +861,7 @@ where
         
         self.write_superblock(&superblock, Some(&mut tx));
 
-        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
         Ok(())
     }
 
@@ -903,8 +915,7 @@ where
         if !tx.records.is_empty() {
             self.write_superblock(&super_block, Some(&mut tx));
 
-            self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-            self.apply_wal_transaction(&tx);
+            self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;            self.apply_wal_transaction(&tx);
         }
         Ok(())
     }
@@ -958,9 +969,8 @@ where
             self.swap_remove_disk_edge(&mut disk_node, &(idk as u64), &mut super_block, Some(&mut tx))
                 .map_err(|e| { self.poison(); GraphError::from(e) })?;
             self.write_superblock(&super_block, Some(&mut tx));
-            self.wal_manager.commit(&tx)
-                .map_err(|e| { self.poison(); GraphError::from(e) })?;
-            self.apply_wal_transaction(&tx);
+            self.commit_and_flush(&tx)
+                .map_err(|e| { self.poison(); GraphError::from(e) })?;            self.apply_wal_transaction(&tx);
             return Ok(found_edge);
         }
         Err(GraphError::EdgeDoesntExist)
@@ -996,8 +1006,7 @@ where
             }
         }
         self.write_superblock(&super_block, Some(&mut tx));
-        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
         Ok(())
     }
 
@@ -1024,9 +1033,8 @@ where
             self.swap_remove_disk_edge(&mut disk_node, &(idk as u64), &mut super_block, Some(&mut tx))
                 .map_err(|e| { self.poison(); GraphError::from(e) })?;
             self.write_superblock(&super_block, Some(&mut tx));
-            self.wal_manager.commit(&tx)
-                .map_err(|e| { self.poison(); GraphError::from(e) })?;
-            self.apply_wal_transaction(&tx);
+            self.commit_and_flush(&tx)
+                .map_err(|e| { self.poison(); GraphError::from(e) })?;            self.apply_wal_transaction(&tx);
             return Ok(found_edge);
         }
         Err(GraphError::EdgeDoesntExist)
@@ -1089,8 +1097,7 @@ where
         let mut super_block = self.get_super_block();
         super_block.increment_node_counter();
         self.write_superblock(&super_block, Some(&mut tx));
-        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
         Ok(())
     }
 
@@ -1109,8 +1116,7 @@ where
         let mut tx = WalTransaction::new();
         let mut disk_node = self.get_disk_node(node);
         self.remove_edges_from_node(&mut disk_node, Some(&mut tx)).map_err(|e| { self.poison();  GraphError::Db(e)})?;
-        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
         Ok(())
     }
 
@@ -1143,8 +1149,7 @@ where
                         GraphError::Db(e)
                     })?;
                 self.write_superblock(&super_block, Some(&mut tx));
-                self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-                self.apply_wal_transaction(&tx);
+                self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;                self.apply_wal_transaction(&tx);
                 return Ok(());
             }
         }
@@ -1176,8 +1181,7 @@ where
         self.write_reverse_edge(&mut disk_node, origin, &mut superblock, Some(&mut tx)).map_err(|e| { self.poison(); GraphError::Db(e) })?;
         self.write_superblock(&superblock, Some(&mut tx));
         
-        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
         Ok(())
     }
 
@@ -1215,8 +1219,7 @@ where
         };
         self.write_superblock(&super_block, Some(&mut tx));
 
-        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
         Ok(())
     }
 
@@ -1257,8 +1260,7 @@ where
 
         disk_node.number_of_reverse_edges = 0;
         self.write_disk_node(&disk_node, Some(&mut tx)).map_err(|e| { self.poison(); GraphError::Db(e)})?;
-        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
         Ok(())
     }
 
@@ -1292,8 +1294,7 @@ where
                         self.poison();
                         GraphError::Db(e)
                     })?;
-                self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-                self.apply_wal_transaction(&tx);
+                self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;                self.apply_wal_transaction(&tx);
                 return Ok(());
             }
         }
@@ -1352,8 +1353,7 @@ where
             }
         }
 
-        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
         Ok(())
     }
 
@@ -1383,8 +1383,7 @@ where
         superblock.node_count -= 1;
         self.write_superblock(&superblock, Some(&mut tx));
         
-        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
         Ok(())
     }
 }
