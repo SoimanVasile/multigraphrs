@@ -33,8 +33,7 @@ pub enum WalRecord {
     Write { file_id: FileId, offset: u64, bytes: Vec<u8> },
     Zero { file_id: FileId, offset: u64, end: u64 },
     CopyWithin { file_id: FileId, src_start: u64, src_end: u64, dest_start: u64 },
-    IncreaseFileSize { file_id: FileId, size: u64},
-}
+    IncreaseFileSize { file_id: FileId, size: u64 },}
 
 impl WalRecord {
     /// Retrieves the `FileId` associated with this `WalRecord`.
@@ -46,8 +45,7 @@ impl WalRecord {
             WalRecord::Write { file_id, .. } => *file_id,
             WalRecord::Zero { file_id, .. } => *file_id,
             WalRecord::CopyWithin { file_id, .. } => *file_id,
-            WalRecord::IncreaseFileSize { file_id, ..} => *file_id,
-        }
+            WalRecord::IncreaseFileSize { file_id, .. } => *file_id,        }
     }
 }
 
@@ -269,11 +267,10 @@ impl WalTransaction {
                     3 => {
                         if cursor + 8 > payload.len() { valid = false; break; }
                         let mut buf8 = [0u8; 8];
-                        buf8.copy_from_slice(&payload[cursor..cursor + 8 ]);
+                        buf8.copy_from_slice(&payload[cursor..cursor + 8]);
                         cursor += 8;
-                         let size = u64::from_le_bytes(buf8);
-                        records.push(WalRecord::IncreaseFileSize { file_id, size});
-                    }
+                        let size = u64::from_le_bytes(buf8);
+                        records.push(WalRecord::IncreaseFileSize { file_id, size });                    }
                     _ => { valid = false; break; }
                 }
             }
@@ -347,11 +344,11 @@ impl WalManager {
         file_structure: &mut FileManager,
         file_reverse: &mut FileManager,
         file_data: &mut FileManager,
-    ) -> Result<(), std::io::Error> {
+    ) -> Result<(), DbError> {
         let old_wal_path = self.dir.join("old_wal.bin");
         let wal_path = self.dir.join("wal.bin");
 
-        let mut replay_file = |path: &PathBuf| -> Result<(), std::io::Error> {
+        let mut replay_file = |path: &PathBuf| -> Result<(), DbError> {
             if path.exists() {
                 let mut file = OpenOptions::new().read(true).open(path)?;
                 let transactions = WalTransaction::deserialize_all(&mut file)?;
@@ -373,10 +370,12 @@ impl WalManager {
                             WalRecord::CopyWithin { src_start, src_end, dest_start, .. } => {
                                 fm.copy_within(src_start, src_end, dest_start);
                             }
-                            WalRecord::IncreaseFileSize { .. } => {
-                                fm.increase_file_size()?;
-                            }                        }
-                    }
+                            WalRecord::IncreaseFileSize { size, .. } => {
+                                if fm.file_len().unwrap() < size {
+                                    fm.increase_file_size()?;
+                                }
+                            }
+                        }                    }
                 }
             }
             Ok(())
@@ -445,7 +444,6 @@ fn wal_background_thread(dir: PathBuf, max_file_size: u64, request_rx: std::sync
 
         // Write batch
         for req in &batch {
-
             if io_error.is_none() {
                 if let Some(f) = file_opt.as_mut() {
                     match f.write_all(&req.payload) {
@@ -460,31 +458,40 @@ fn wal_background_thread(dir: PathBuf, max_file_size: u64, request_rx: std::sync
             }
         }
 
-        if current_size >= max_file_size {
-            
-            if old_wal_path.exists() {
-                std::fs::remove_file(&old_wal_path).unwrap();
-            }
-            if wal_path.exists() {
-                std::fs::rename(&wal_path, &old_wal_path).unwrap();
-            }
-            
-            match open_new_file() {
-                Ok((new_file, size)) => {
-                    file_opt = Some(new_file);
-                    current_size = size;
-                    rotated = true;
-                }
-                Err(e) => {
+        // Sync the data we just wrote before doing anything else
+        if io_error.is_none() {
+            if let Some(f) = file_opt.as_mut() {
+                if let Err(e) = f.sync_all() {
                     io_error = Some(e);
                 }
             }
         }
 
-        if io_error.is_none() {
-            if let Some(f) = file_opt.as_mut() {
-                if let Err(e) = f.sync_all() {
-                    io_error = Some(e);
+        // Rotate if needed — data is already durable on disk at this point
+        if io_error.is_none() && current_size >= max_file_size {
+            // Drop the file handle before renaming
+            drop(file_opt.take());
+
+            if let Err(e) = (|| -> std::io::Result<()> {
+                if old_wal_path.exists() {
+                    std::fs::remove_file(&old_wal_path)?;
+                }
+                std::fs::rename(&wal_path, &old_wal_path)?;
+                Ok(())
+                    })() {
+                io_error = Some(e);
+            }
+
+            if io_error.is_none() {
+                match open_new_file() {
+                    Ok((new_file, size)) => {
+                        file_opt = Some(new_file);
+                        current_size = size;
+                        rotated = true;
+                    }
+                    Err(e) => {
+                        io_error = Some(e);
+                    }
                 }
             }
         }
@@ -496,8 +503,10 @@ fn wal_background_thread(dir: PathBuf, max_file_size: u64, request_rx: std::sync
                 let _ = req.response_tx.send(Err(std::io::Error::new(e.kind(), e.to_string())));
             }
         } else {
+            let mut first = true;
             for req in batch {
-                let _ = req.response_tx.send(Ok(rotated));
+                let _ = req.response_tx.send(Ok(first && rotated));
+                first = false;
             }
         }
     }

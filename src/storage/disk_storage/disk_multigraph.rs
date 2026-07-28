@@ -108,8 +108,7 @@ fn resizing_disk_node(file_manager: &mut FileManager, super_block: &mut SuperBlo
     };
 
     while free_offset + disk_node.capacity > file_manager.file_len()?{
-        if let Some(ref mut t) = tx { t.increase_file_size(FileId::Structure, file_manager.check_next_size(file_manager.file_len()?)?); }
-        file_manager.increase_file_size()?;
+        if let Some(ref mut t) = tx { t.increase_file_size(FileId::Structure, file_manager.check_next_size(file_manager.file_len()?)?); }        file_manager.increase_file_size()?;
     }
     let edge_offset= disk_node.list_edges_offset;
     let edge_offset_end = edge_offset + (disk_node.number_of_edges * size_of::<DiskEdge>() as u64);
@@ -152,8 +151,7 @@ pub fn resizing_disk_node_reverse(file_manager: &mut FileManager, super_block: &
 
     while free_offset + disk_node.reverse_capacity > file_manager.file_len()? {
         if let Some(ref mut t) = tx { t.increase_file_size(FileId::Reverse, file_manager.check_next_size(file_manager.file_len()?)?); }
-        file_manager.increase_file_size()?;
-    }
+        file_manager.increase_file_size()?;    }
 
     let src_end = old_offset + (disk_node.number_of_reverse_edges * size_of::<u64>() as u64);
     if let Some(t) = tx.as_deref_mut() {
@@ -284,8 +282,8 @@ where
         }
     }
 
-    fn commit_and_flush(&mut self, tx: &WalTransaction) -> Result<(), std::io::Error> {
-        let rotated = self.wal_manager.commit(tx)?;
+    fn commit_and_flush(&mut self, tx: &WalTransaction) -> Result<(), DbError> {
+        let rotated = self.wal_manager.commit(tx).map_err(DbError::Io)?;
         if rotated {
             self.file_manager_node.flush()?;
             self.file_manager_edge_structure.flush()?;
@@ -384,8 +382,7 @@ where
         let bytes = disk_node.convert_to_bytes();
 
         while offset + bytes.len() as u64 > self.file_manager_node.file_len()?{
-            if let Some(ref mut t) = tx { t.increase_file_size(FileId::Node, self.file_manager_node.check_next_size(self.file_manager_node.file_len()?)?); }
-            self.file_manager_node.increase_file_size()?;
+            if let Some(ref mut t) = tx { t.increase_file_size(FileId::Node, self.file_manager_node.check_next_size(self.file_manager_node.file_len()?)?); }            self.file_manager_node.increase_file_size()?;
         }
         if let Some(t) = tx {
             t.write_bytes(FileId::Node, offset, bytes);
@@ -521,8 +518,7 @@ where
     pub fn write_weight(&mut self, weight_data_bytes: &[u8], weight_offset: &u64, mut tx: Option<&mut WalTransaction>) -> Result<(), DbError>{
 
         while *weight_offset + weight_data_bytes.len() as u64 > self.file_manager_weight_data.file_len()?{
-            if let Some(ref mut t) = tx { t.increase_file_size(FileId::Data, self.file_manager_weight_data.check_next_size(self.file_manager_weight_data.file_len()?)?); }
-            self.file_manager_weight_data.increase_file_size()?;
+            if let Some(ref mut t) = tx { t.increase_file_size(FileId::Data, self.file_manager_weight_data.check_next_size(self.file_manager_weight_data.file_len()?)?); }            self.file_manager_weight_data.increase_file_size()?;
         }
 
         if let Some(t) = tx {
@@ -718,8 +714,7 @@ where
                     };
                     fm.copy_within(*src_start, *src_end, *dest_start);
                 }
-                WalRecord::IncreaseFileSize { file_id: _, size: _} => {
-                    // Already applied directly to satisfy length checks during buffer phase.
+                WalRecord::IncreaseFileSize { file_id: _, size: _} => {                    // Already applied directly to satisfy length checks during buffer phase.
                 }
             }
         }
@@ -839,8 +834,7 @@ where
         let mut superblock = self.get_super_block();
 
         if check_node_allocated(&disk_node, FileId::Structure).map_err(|e| { self.poison(); GraphError::from(e) })? {
-                allocated_disk_node(&mut disk_node, &mut self.file_manager_edge_structure, FileId::Structure, &mut superblock, &mut tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-            }
+                allocated_disk_node(&mut disk_node, &mut self.file_manager_edge_structure, FileId::Structure, &mut superblock, &mut tx).map_err(|e| { self.poison(); GraphError::from(e) })?;            }
 
         let data_offset = superblock.get_free_block_data();
         let disk_edge: DiskEdge = DiskEdge::new(data_offset, std::mem::size_of::<W>() as u64, edge.get_target());
@@ -887,8 +881,7 @@ where
                 .entry(*node)
                 .or_insert_with(|| self.get_disk_node(node));
             if check_node_allocated(&disk_node, FileId::Structure).map_err(|e| { self.poison(); GraphError::from(e) })? {
-                allocated_disk_node(&mut disk_node, &mut self.file_manager_edge_structure, FileId::Structure, &mut super_block, &mut tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-            }
+                allocated_disk_node(&mut disk_node, &mut self.file_manager_edge_structure, FileId::Structure, &mut super_block, &mut tx).map_err(|e| { self.poison(); GraphError::from(e) })?;            }
 
             let data_offset = super_block.get_free_block_data();
             let disk_edge: DiskEdge = DiskEdge::new(data_offset, std::mem::size_of::<W>() as u64, edge.get_target());
@@ -1174,8 +1167,7 @@ where
 
         // First-time initialization: allocate a reverse edge block for this node
         if check_node_allocated(&disk_node, FileId::Reverse).map_err(|e| { self.poison(); GraphError::from(e) })? {
-            allocated_disk_node(&mut disk_node, &mut self.file_manager_reverse_edge, FileId::Reverse, &mut superblock, &mut tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-        }
+            allocated_disk_node(&mut disk_node, &mut self.file_manager_reverse_edge, FileId::Reverse, &mut superblock, &mut tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        }
 
         // Check if adding this reverse edge would overflow the allocated capacity
         self.write_reverse_edge(&mut disk_node, origin, &mut superblock, Some(&mut tx)).map_err(|e| { self.poison(); GraphError::Db(e) })?;
@@ -1213,8 +1205,7 @@ where
                 .map_err(|e|{ 
                     self.poison(); 
                     GraphError::Db(e)
-                })?;
-            
+                })?;            
             seen_disk_node.insert(*target, disk_node);
         };
         self.write_superblock(&super_block, Some(&mut tx));
