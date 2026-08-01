@@ -19,6 +19,8 @@ pub enum DbError {
     /// An internal file ID does not map to a valid storage file.
     InvalidFileId(u8),
 
+    WalThreadDead,
+
     /// The database has been halted due to a previous fatal I/O error.
     ///
     /// Once poisoned, the database will not accept any further write operations.
@@ -33,6 +35,7 @@ impl fmt::Display for DbError {
             DbError::CorruptedWal(msg) => write!(f, "WAL is corrupted: {}", msg),
             DbError::InvalidFileId(id) => write!(f, "Invalid internal file ID: {}", id),
             DbError::Poisoned => write!(f, "Database is poisoned due to a previous fatal I/O error"),
+            DbError::WalThreadDead => write!(f, "WAL thread is dead and cant write in log"),
         }
     }
 }

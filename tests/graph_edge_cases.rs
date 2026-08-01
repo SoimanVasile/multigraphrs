@@ -1,4 +1,4 @@
-use multigraphrs::{MultiGraph, Directed, DiskStorage};
+use multigraphrs::Directed;
 
 #[test]
 fn test_multigraph_with_capacity() {

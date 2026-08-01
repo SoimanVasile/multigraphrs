@@ -38,6 +38,8 @@ use storage::storage_backend::StorageBackend;
 use std::{hash::Hash, marker::PhantomData};
 use ahash::{AHashMap, AHashSet};
 
+use crate::storage::adjacency_list;
+
 const MAX_CAPACITY_BULK: usize = 131_072; // The max size of a buffer for a bulk operation
 
 /// The core graph structure representing a mathematical graph.
@@ -133,6 +135,29 @@ where
 
     }
 
+    fn process_batch (&mut self, nodes: &mut Vec<K>) -> Result<(), GraphError> {
+        if nodes.is_empty() {
+            return Ok(());
+        }
+        let adjacency_list = &mut self.adjacency_list;
+        let reversed_hashed_nodes = &mut self.reversed_hashed_nodes;
+        let hashed_nodes = &mut self.hashed_nodes;
+        let nodes_id = adjacency_list.bulk_add_node(&(nodes.len() as u64))?;
+
+        let max = nodes_id.iter().max().unwrap();
+
+        if *max >= reversed_hashed_nodes.len() as u64 {
+            reversed_hashed_nodes.resize(*max as usize + 1, None);
+        }
+
+        for (index, node) in nodes.iter().enumerate(){
+            let id = nodes_id[index];
+            hashed_nodes.insert(node.clone(), id);
+            reversed_hashed_nodes[id as usize] = Some(node.clone());
+        }
+        nodes.clear();
+        Ok(())
+    }
     /// Adds multiple disconnected nodes to the graph in bulk.
     ///
     /// Note: This method is designed to skip nodes that do not exist instead of aborting or partially applying.
@@ -146,26 +171,14 @@ where
         let mut non_existing_nodes: Vec<K> = Vec::with_capacity(MAX_CAPACITY_BULK);
         let mut seen_in_batch: AHashSet<K> = AHashSet::new();
 
+
         for source in sources{
             if self.hashed_nodes.contains_key(source) || !seen_in_batch.insert(source.clone()) {
                 continue
             }
 
             if non_existing_nodes.len() >= MAX_CAPACITY_BULK{
-                let nodes_id = self.adjacency_list.bulk_add_node(&(non_existing_nodes.len() as u64))?;
-
-                let max = nodes_id.iter().max().unwrap();
-
-                if *max >= self.reversed_hashed_nodes.len() as u64{
-                    self.reversed_hashed_nodes.resize(*max as usize + 1, None);
-                }
-
-                for (index, node) in non_existing_nodes.iter().enumerate(){
-                    let id = nodes_id[index];
-                    self.hashed_nodes.insert(node.clone(), id);
-                    self.reversed_hashed_nodes[id as usize] = Some(node.clone());
-                }
-                non_existing_nodes.clear();
+                self.process_batch(&mut non_existing_nodes)?;
             }
 
             non_existing_nodes.push(source.clone());
@@ -173,23 +186,7 @@ where
 
         seen_in_batch.clear();
 
-        if !non_existing_nodes.is_empty(){
-
-            let nodes_id = self.adjacency_list.bulk_add_node(&(non_existing_nodes.len() as u64))?;
-
-            let max = nodes_id.iter().max().unwrap();
-
-            if *max >= self.reversed_hashed_nodes.len() as u64{
-                self.reversed_hashed_nodes.resize(*max as usize + 1, None);
-            }
-
-            for (index, node) in non_existing_nodes.iter().enumerate(){
-                let id = nodes_id[index];
-                self.hashed_nodes.insert(node.clone(), id);
-                self.reversed_hashed_nodes[id as usize] = Some(node.clone());
-            }
-            non_existing_nodes.clear();
-        }
+        self.process_batch(&mut non_existing_nodes)?;
         
         Ok(())
     }

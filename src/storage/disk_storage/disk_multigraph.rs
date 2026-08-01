@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::core::graph_errors::GraphError;
 use crate::core::db_error::DbError;
 use std::sync::atomic::{AtomicBool, Ordering};
-use crate::storage::disk_storage::allocater::AllocatedStruct;
+use crate::storage::disk_storage::allocator::AllocatedStruct;
 use crate::storage::disk_storage::disk_edge_iterator::DiskEdgeIterator;
 use crate::storage::disk_storage::disk_edge_iterator::DiskReverseEdgeIterator;
 use crate::storage::disk_storage::disk_node::DISK_NODE_INITIAL_CAPACITY;
@@ -124,7 +124,7 @@ fn resizing_disk_node(file_manager: &mut FileManager, super_block: &mut SuperBlo
         let mut old_node = *disk_node;
         old_node.list_edges_offset = edge_offset;
         old_node.capacity /= 2;
-        alloc.deallocater(&old_node);
+        alloc.deallocator(&old_node);
     }
     disk_node.list_edges_offset = free_offset;
 
@@ -166,7 +166,7 @@ pub fn resizing_disk_node_reverse(file_manager: &mut FileManager, super_block: &
         let mut old_node = *disk_node;
         old_node.list_reverse_edges_offset = old_offset;
         old_node.reverse_capacity /= 2;
-        alloc.deallocater(&old_node);
+        alloc.deallocator(&old_node);
     }
     disk_node.list_reverse_edges_offset = free_offset;
     Ok(())
@@ -282,6 +282,13 @@ where
         }
     }
 
+    /// Commits a WAL transaction and flushes graph data files if the WAL was rotated.
+    ///
+    /// When the background thread rotates the WAL file (because it exceeded
+    /// `max_file_size`), `commit` returns `rotated = true`. This method then
+    /// flushes all four memory-mapped data files so the operations in the now
+    /// `old_wal.bin` are persisted. On the *next* rotation the background thread
+    /// deletes `old_wal.bin` — by that point this flush is guaranteed complete.
     fn commit_and_flush(&mut self, tx: &WalTransaction) -> Result<(), DbError> {
         let rotated = self.wal_manager.commit(tx).map_err(DbError::Io)?;
         if rotated {
@@ -568,7 +575,7 @@ where
             
             {
                 let mut alloc = AllocatedStruct::new(&mut self.file_manager_edge_structure, &mut super_block, tx.as_deref_mut(), FileId::Structure);
-                alloc.deallocater(disk_node);
+                alloc.deallocator(disk_node);
             }
 
             disk_node.number_of_edges = 0;
@@ -589,7 +596,7 @@ where
 
             {
                 let mut alloc = AllocatedStruct::new(&mut self.file_manager_reverse_edge, &mut super_block, tx.as_deref_mut(), FileId::Reverse);
-                alloc.deallocater(disk_node);
+                alloc.deallocator(disk_node);
             }
 
             disk_node.number_of_reverse_edges = 0;

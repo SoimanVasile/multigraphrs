@@ -4,6 +4,10 @@ use std::path::PathBuf;
 use crate::storage::disk_storage::file_manager::FileManager;
 use crate::core::db_error::DbError;
 
+/// Identifies which backing file a WAL record targets.
+///
+/// Each variant maps to one of the four memory-mapped data files
+/// that make up the on-disk graph storage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileId {
     Node = 0,
@@ -28,54 +32,57 @@ impl FileId {
     }
 }
 
+/// A single operation to be replayed against a data file.
+///
+/// Each record captures exactly one mutation so the WAL can
+/// faithfully reconstruct the state of the data files after a crash.
 #[derive(Debug, Clone)]
 pub enum WalRecord {
+    /// Overwrite bytes at the given offset.
     Write { file_id: FileId, offset: u64, bytes: Vec<u8> },
+    /// Zero out the byte range `[offset, end)`.
     Zero { file_id: FileId, offset: u64, end: u64 },
+    /// Copy the byte range `[src_start, src_end)` to `dest_start`.
     CopyWithin { file_id: FileId, src_start: u64, src_end: u64, dest_start: u64 },
-    IncreaseFileSize { file_id: FileId, size: u64 },}
+    /// Double (or grow by 4 GB) the file, recording the target `size`
+    /// so replay can skip the resize if the file is already large enough.
+    IncreaseFileSize { file_id: FileId, size: u64 },
+}
 
 impl WalRecord {
-    /// Retrieves the `FileId` associated with this `WalRecord`.
-    ///
-    /// # Errors
-    /// This method does not return an error.
+    /// Returns the [`FileId`] this record targets.
     pub fn file_id(&self) -> FileId {
         match self {
             WalRecord::Write { file_id, .. } => *file_id,
             WalRecord::Zero { file_id, .. } => *file_id,
             WalRecord::CopyWithin { file_id, .. } => *file_id,
-            WalRecord::IncreaseFileSize { file_id, .. } => *file_id,        }
+            WalRecord::IncreaseFileSize { file_id, .. } => *file_id,
+        }
     }
 }
 
+/// A group of [`WalRecord`]s that are committed atomically.
+///
+/// The transaction is serialized with a checksum so that partially-written
+/// transactions (due to a crash) are detected and skipped during replay.
 #[derive(Debug)]
 pub struct WalTransaction {
     pub records: Vec<WalRecord>,
 }
 
-impl Default for WalTransaction{
+impl Default for WalTransaction {
     fn default() -> Self {
         Self::new()
     }
 }
 
 impl WalTransaction {
-    /// Creates a new, empty `WalTransaction`.
-    ///
-    /// # Errors
-    /// This method does not return an error.
+    /// Creates a new, empty transaction.
     pub fn new() -> Self {
         Self { records: Vec::new() }
     }
 
-    /// Adds a `Write` record to the transaction.
-    ///
-    /// # Side Effects
-    /// Modifies the `records` vector by appending a new record.
-    ///
-    /// # Errors
-    /// This method does not return an error.
+    /// Appends a [`WalRecord::Write`] that overwrites `bytes` at `offset`.
     pub fn write_bytes(&mut self, file_id: FileId, offset: u64, bytes: &[u8]) {
         self.records.push(WalRecord::Write {
             file_id,
@@ -84,43 +91,25 @@ impl WalTransaction {
         });
     }
 
-    /// Adds a `Zero` record to the transaction.
-    ///
-    /// # Side Effects
-    /// Modifies the `records` vector by appending a new record.
-    ///
-    /// # Errors
-    /// This method does not return an error.
+    /// Appends a [`WalRecord::Zero`] that zeroes the range `[offset, end)`.
     pub fn zero_mmap(&mut self, file_id: FileId, offset: u64, end: u64) {
         self.records.push(WalRecord::Zero { file_id, offset, end });
     }
 
-    /// Adds a `CopyWithin` record to the transaction.
-    ///
-    /// # Side Effects
-    /// Modifies the `records` vector by appending a new record.
-    ///
-    /// # Errors
-    /// This method does not return an error.
+    /// Appends a [`WalRecord::CopyWithin`] that copies `[src_start, src_end)` to `dest_start`.
     pub fn copy_within(&mut self, file_id: FileId, src_start: u64, src_end: u64, dest_start: u64) {
         self.records.push(WalRecord::CopyWithin { file_id, src_start, src_end, dest_start });
     }
 
-    /// Adds an `IncreaseFileSize` record to the transaction.
-    ///
-    /// # Side Effects
-    /// Modifies the `records` vector by appending a new record.
-    ///
-    /// # Errors
-    /// This method does not return an error.
+    /// Appends a [`WalRecord::IncreaseFileSize`] that records the new target `size`.
     pub fn increase_file_size(&mut self, file_id: FileId, size: u64) {
         self.records.push(WalRecord::IncreaseFileSize { file_id, size });
     }
 
-    /// Calculates the checksum for a given payload.
+    /// Computes a simple additive checksum over `payload`.
     ///
-    /// # Errors
-    /// This method does not return an error.
+    /// This is intentionally lightweight — it catches torn writes and
+    /// accidental corruption but is not cryptographic.
     fn calculate_checksum(payload: &[u8]) -> u32 {
         let mut sum = 0u32;
         for &b in payload {
@@ -129,13 +118,17 @@ impl WalTransaction {
         sum
     }
 
-    /// Serializes the transaction into a byte vector.
+    /// Serializes the transaction into a self-describing byte vector.
     ///
-    /// # Side Effects
-    /// Allocates memory for the returned byte vector.
-    ///
-    /// # Errors
-    /// This method does not return an error.
+    /// Wire format:
+    /// ```text
+    /// [WALT magic (4 bytes)]
+    /// [payload length (4 bytes LE)]
+    /// [checksum (4 bytes LE)]
+    /// [payload ...]
+    ///   - record count (4 bytes LE)
+    ///   - for each record: type (1 byte), file_id (1 byte), fields...
+    /// ```
     pub fn serialize(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         buf.extend_from_slice(b"WALT");
@@ -178,13 +171,12 @@ impl WalTransaction {
         buf
     }
 
-    /// Deserializes all transactions from the given file.
+    /// Deserializes every valid transaction from `file`, stopping at
+    /// the first corrupted or incomplete record.
     ///
-    /// # Side Effects
-    /// Reads from the provided file and modifies its internal cursor.
-    ///
-    /// # Errors
-    /// Returns an `std::io::Error` if reading from the file fails.
+    /// This is used during crash recovery: any partially-written
+    /// transaction at the tail of the file is silently discarded
+    /// because its checksum will not match.
     pub fn deserialize_all(file: &mut File) -> Result<Vec<WalTransaction>, DbError> {
         file.rewind()?;
         let mut transactions = Vec::new();
@@ -270,7 +262,8 @@ impl WalTransaction {
                         buf8.copy_from_slice(&payload[cursor..cursor + 8]);
                         cursor += 8;
                         let size = u64::from_le_bytes(buf8);
-                        records.push(WalRecord::IncreaseFileSize { file_id, size });                    }
+                        records.push(WalRecord::IncreaseFileSize { file_id, size });
+                    }
                     _ => { valid = false; break; }
                 }
             }
@@ -284,28 +277,126 @@ impl WalTransaction {
     }
 }
 
-pub struct WalRequest {
-    payload: Vec<u8>,
-    response_tx: std::sync::mpsc::Sender<std::io::Result<bool>>, // true if rotation occurred
+struct DBFiles<'a>{
+    file_node: &'a mut FileManager,
+    file_structure: &'a mut FileManager,
+    file_reverse: &'a mut FileManager,
+    file_data: &'a mut FileManager,
 }
 
+impl<'a> DBFiles<'a>{
+    pub fn new(file_node: &'a mut FileManager, file_structure: &'a mut FileManager, file_reverse: &'a mut FileManager, file_data: &'a mut FileManager) -> Self{
+        Self{file_node, file_structure, file_reverse, file_data}
+    }
+}
+
+fn replay_file(path: &PathBuf, files: &mut DBFiles) -> Result<(), DbError> {
+    if path.exists() {
+        let mut file = OpenOptions::new().read(true).open(path)?;
+        let transactions = WalTransaction::deserialize_all(&mut file)?;
+        for tx in transactions {
+            for record in tx.records {
+                let fm = match record.file_id() {
+                    FileId::Node => &mut files.file_node,
+                    FileId::Structure => &mut files.file_structure,
+                    FileId::Reverse => &mut files.file_reverse,
+                    FileId::Data => &mut files.file_data,
+                };
+                match record {
+                    WalRecord::Write { offset, bytes, .. } => {
+                        fm.writing_bytes_to_mmap(offset, offset + bytes.len() as u64, &bytes);
+                    }
+                    WalRecord::Zero { offset, end, .. } => {
+                        fm.zeroing_mmap(offset, end);
+                    }
+                    WalRecord::CopyWithin { src_start, src_end, dest_start, .. } => {
+                        fm.copy_within(src_start, src_end, dest_start);
+                    }
+                    WalRecord::IncreaseFileSize { size, .. } => {
+                        if fm.file_len().unwrap() < size {
+                            fm.increase_file_size()?;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Message sent from [`WalManager::commit`] to the background thread.
+///
+/// Also used directly in tests to exercise concurrent multi-producer scenarios.
+pub struct WalRequest {
+    /// Pre-serialized transaction bytes ready to be appended to the WAL file.
+    pub payload: Vec<u8>,
+    /// One-shot channel the background thread uses to signal completion.
+    /// The `bool` is `true` when the WAL file was rotated after this write,
+    /// meaning the caller should flush all graph data files.
+    pub response_tx: std::sync::mpsc::Sender<std::io::Result<bool>>,
+}
+
+/// Manages the write-ahead log with a background writer thread.
+///
+/// # Architecture
+///
+/// ```text
+///  caller thread                background thread
+///  ─────────────                ─────────────────
+///  commit(tx)                         │
+///    ├─ serialize ──► request_tx ──►   │
+///    │                                ├─ write_all + sync_all
+///    │                                ├─ rotate if full
+///    │◄── response_rx ◄──────────────┘
+///    └─ return Ok(rotated)
+/// ```
+///
+/// The background thread batches multiple requests that arrive while it
+/// is busy writing, so only one `sync_all` is issued per batch.
+///
+/// ## Rotation
+///
+/// When `wal.bin` exceeds `max_file_size` after a batch write:
+/// 1. The current `wal.bin` is `sync_all`'d (data durable).
+/// 2. `old_wal.bin` is deleted (its data was already flushed to graph
+///    files by the caller during the *previous* rotation).
+/// 3. `wal.bin` is renamed to `old_wal.bin`.
+/// 4. A fresh `wal.bin` is created.
+/// 5. `rotated = true` is returned to the **first** caller in the
+///    batch so it flushes the four graph data files.
+///
+/// Subsequent callers in the same batch receive `rotated = false`
+/// because a single flush is sufficient.
 #[derive(Debug)]
 pub struct WalManager {
     dir: PathBuf,
-    request_tx: Option<std::sync::mpsc::Sender<WalRequest>>,
+    /// The sender half of the channel to the background thread.
+    /// Exposed as `pub` so tests can clone it for multi-producer scenarios.
+    pub request_tx: Option<std::sync::mpsc::Sender<WalRequest>>,
 }
 
+
 impl WalManager {
-    /// Creates a new `WalManager` for the given directory.
+    /// Creates a new [`WalManager`] rooted at `dir`.
+    ///
+    /// The directory is created if it does not exist. No background
+    /// thread is started until [`start`](Self::start) is called.
     pub fn new(dir: PathBuf) -> Result<Self, std::io::Error> {
         std::fs::create_dir_all(&dir)?;
         Ok(Self { dir, request_tx: None })
     }
 
-    /// Starts the background thread.
+    /// Spawns the background writer thread.
+    ///
+    /// The thread will rotate the WAL file when it exceeds
+    /// `max_file_size` bytes and signal the caller to flush.
+    ///
+    /// # Panics
+    /// Panics if the initial `wal.bin` file cannot be opened.
     pub fn start(&mut self, max_file_size: u64) -> Result<(), std::io::Error> {
         let (request_tx, request_rx) = std::sync::mpsc::channel();
         self.request_tx = Some(request_tx);
+
         let dir = self.dir.clone();
 
         std::thread::spawn(move || {
@@ -314,10 +405,24 @@ impl WalManager {
         Ok(())
     }
 
-    /// Commits the given transaction to the write-ahead log.
-    pub fn commit(&mut self, tx: &WalTransaction) -> Result<bool, std::io::Error> {
+    /// Sends a serialized transaction to the background thread and
+    /// blocks until the data is durable on disk.
+    ///
+    /// # Returns
+    /// - `Ok(true)` — the WAL was rotated; the caller **must** flush
+    ///   all four graph data files before issuing the next commit.
+    /// - `Ok(false)` — normal commit, no flush needed.
+    ///
+    /// # Errors
+    /// - [`std::io::ErrorKind::NotConnected`] if [`start`](Self::start)
+    ///   was never called.
+    /// - [`std::io::ErrorKind::BrokenPipe`] if the background thread
+    ///   has panicked or been dropped.
+    /// - Any I/O error propagated from the background thread's
+    ///   `write_all` or `sync_all`.
+    pub fn commit(&self, tx: &WalTransaction) -> Result<bool, std::io::Error> {
         let bytes = tx.serialize();
-        
+
         let tx_sender = self.request_tx.as_ref().ok_or_else(|| {
             std::io::Error::new(std::io::ErrorKind::NotConnected, "WalManager thread not started")
         })?;
@@ -337,7 +442,14 @@ impl WalManager {
         })
     }
 
-    /// Replays all transactions in the write-ahead logs against the given file managers.
+    /// Replays all WAL transactions on startup to recover from a crash.
+    ///
+    /// Reads `old_wal.bin` first (if it exists), then `wal.bin`,
+    /// applying every record to the appropriate [`FileManager`].
+    /// After replay the data files are flushed and both WAL files
+    /// are deleted so the database starts with a clean slate.
+    ///
+    /// This must be called **before** [`start`](Self::start).
     pub fn replay(
         &mut self,
         file_node: &mut FileManager,
@@ -348,41 +460,9 @@ impl WalManager {
         let old_wal_path = self.dir.join("old_wal.bin");
         let wal_path = self.dir.join("wal.bin");
 
-        let mut replay_file = |path: &PathBuf| -> Result<(), DbError> {
-            if path.exists() {
-                let mut file = OpenOptions::new().read(true).open(path)?;
-                let transactions = WalTransaction::deserialize_all(&mut file)?;
-                for tx in transactions {
-                    for record in tx.records {
-                        let fm = match record.file_id() {
-                            FileId::Node => &mut *file_node,
-                            FileId::Structure => &mut *file_structure,
-                            FileId::Reverse => &mut *file_reverse,
-                            FileId::Data => &mut *file_data,
-                        };
-                        match record {
-                            WalRecord::Write { offset, bytes, .. } => {
-                                fm.writing_bytes_to_mmap(offset, offset + bytes.len() as u64, &bytes);
-                            }
-                            WalRecord::Zero { offset, end, .. } => {
-                                fm.zeroing_mmap(offset, end);
-                            }
-                            WalRecord::CopyWithin { src_start, src_end, dest_start, .. } => {
-                                fm.copy_within(src_start, src_end, dest_start);
-                            }
-                            WalRecord::IncreaseFileSize { size, .. } => {
-                                if fm.file_len().unwrap() < size {
-                                    fm.increase_file_size()?;
-                                }
-                            }
-                        }                    }
-                }
-            }
-            Ok(())
-        };
-
-        replay_file(&old_wal_path)?;
-        replay_file(&wal_path)?;
+        let mut files = DBFiles::new(file_node, file_structure, file_reverse, file_data);
+        replay_file(&old_wal_path, &mut files)?;
+        replay_file(&wal_path, &mut files)?;
 
         file_node.flush()?;
         file_structure.flush()?;
@@ -399,38 +479,48 @@ impl WalManager {
     }
 }
 
+/// The background writer loop.
+///
+/// Runs on a dedicated thread, receiving serialized WAL transactions
+/// via `request_rx`. Each iteration:
+///
+/// 1. **Block** on the first incoming request.
+/// 2. **Drain** any additional requests that arrived in the meantime
+///    to form a batch.
+/// 3. **Write** all payloads to `wal.bin`.
+/// 4. **`sync_all`** so the data is durable.
+/// 5. **Rotate** if the file exceeded `max_file_size`:
+///    - drop the file handle
+///    - delete `old_wal.bin` (safe — its data was flushed to the
+///      graph files by the caller after the *previous* rotation)
+///    - rename `wal.bin` → `old_wal.bin`
+///    - open a fresh `wal.bin`
+/// 6. **Respond** to every caller in the batch. Only the first caller
+///    receives `rotated = true` so exactly one flush happens.
+///
+/// The loop exits when all senders are dropped (channel disconnected).
 fn wal_background_thread(dir: PathBuf, max_file_size: u64, request_rx: std::sync::mpsc::Receiver<WalRequest>) {
     let wal_path = dir.join("wal.bin");
     let old_wal_path = dir.join("old_wal.bin");
 
-    let open_new_file = || -> std::io::Result<(File, u64)> {
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&wal_path)?;
-        let metadata = file.metadata()?;
-        Ok((file, metadata.len()))
-    };
 
     let mut current_file: Option<File>;
     let mut current_size: u64;
 
-    match open_new_file() {
+    match open_new_file(&wal_path) {
         Ok((f, size)) => {
             current_file = Some(f);
             current_size = size;
         }
         Err(e) => {
-            eprintln!("WAL thread failed to open initial log file: {}", e);
-            return;
+            panic!("WAL thread failed to open initial log file: {}", e);
         }
     }
 
     loop {
-        // req is a struct of WalRequest which has a sender channel and the bytes to write
         let req = match request_rx.recv() {
             Ok(req) => req,
-            Err(_) => break,
+            Err(_) => break, // all senders dropped — shut down
         };
 
         let mut batch = vec![req];
@@ -442,10 +532,10 @@ fn wal_background_thread(dir: PathBuf, max_file_size: u64, request_rx: std::sync
         let mut io_error = None;
         let mut rotated = false;
 
-        // Write batch
+        // ── Step 1: write the entire batch ──
         for req in &batch {
-            if io_error.is_none() {
-                if let Some(f) = file_opt.as_mut() {
+            if io_error.is_none()
+                && let Some(f) = file_opt.as_mut() {
                     match f.write_all(&req.payload) {
                         Ok(_) => {
                             current_size += req.payload.len() as u64;
@@ -455,42 +545,31 @@ fn wal_background_thread(dir: PathBuf, max_file_size: u64, request_rx: std::sync
                         }
                     }
                 }
-            }
         }
 
-        // Sync the data we just wrote before doing anything else
-        if io_error.is_none() {
-            if let Some(f) = file_opt.as_mut() {
-                if let Err(e) = f.sync_all() {
+        // ── Step 2: sync — data is durable after this ──
+        if io_error.is_none()
+            && let Some(f) = file_opt.as_mut()
+                && let Err(e) = f.sync_all() {
                     io_error = Some(e);
                 }
-            }
-        }
 
-        // Rotate if needed — data is already durable on disk at this point
+        // ── Step 3: rotate if WAL exceeded the size limit ──
         if io_error.is_none() && current_size >= max_file_size {
-            // Drop the file handle before renaming
-            drop(file_opt.take());
 
-            if let Err(e) = (|| -> std::io::Result<()> {
-                if old_wal_path.exists() {
-                    std::fs::remove_file(&old_wal_path)?;
-                }
-                std::fs::rename(&wal_path, &old_wal_path)?;
-                Ok(())
-                    })() {
-                io_error = Some(e);
-            }
-
+            match rotate_wal(&mut file_opt, &old_wal_path, &wal_path){
+                Ok(_) => {},
+                Err(e) => io_error = Some(e),
+            };
             if io_error.is_none() {
-                match open_new_file() {
+                match open_new_file(&wal_path) {
                     Ok((new_file, size)) => {
                         file_opt = Some(new_file);
                         current_size = size;
                         rotated = true;
                     }
                     Err(e) => {
-                        io_error = Some(e);
+                        io_error = Some(e)
                     }
                 }
             }
@@ -498,6 +577,7 @@ fn wal_background_thread(dir: PathBuf, max_file_size: u64, request_rx: std::sync
 
         current_file = file_opt;
 
+        // ── Step 4: respond to every caller ──
         if let Some(e) = io_error {
             for req in batch {
                 let _ = req.response_tx.send(Err(std::io::Error::new(e.kind(), e.to_string())));
@@ -510,4 +590,30 @@ fn wal_background_thread(dir: PathBuf, max_file_size: u64, request_rx: std::sync
             }
         }
     }
+}
+
+fn rotate_wal(file_opt: &mut Option<File>, old_wal_path: &PathBuf, wal_path: &PathBuf) -> Result<(), std::io::Error>{
+    
+    // Drop the file handle before renaming
+    drop(file_opt.take());
+
+    (|| -> std::io::Result<()> {
+        if old_wal_path.exists() {
+            std::fs::remove_file(&old_wal_path)?;
+        }
+        std::fs::rename(&wal_path, &old_wal_path)?;
+        Ok(())
+    })()?;
+    
+    Ok(())
+}
+
+
+fn open_new_file(wal_path: &PathBuf) -> std::io::Result<(File, u64)> {
+    let file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&wal_path)?;
+    let metadata = file.metadata()?;
+    Ok((file, metadata.len()))
 }

@@ -133,7 +133,7 @@ fn edges_work_correctly_after_reuse_weighted() {
 
     g.add_node("A").unwrap();
     g.add_node("B").unwrap();
-    g.add_edge("A", "B", 3.14).unwrap();
+    g.add_edge("A", "B", 3.5).unwrap();
 
     g.remove_node(&"B").unwrap();
 

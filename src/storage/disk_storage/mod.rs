@@ -5,5 +5,5 @@ pub mod from_disk_bytes;
 pub mod disk_edge_iterator;
 pub mod disk_multigraph;
 pub mod file_manager;
-pub mod allocater;
+pub mod allocator;
 pub mod wal;

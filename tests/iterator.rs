@@ -92,14 +92,14 @@ fn iter_weighted_directed() {
     g.add_node("X").unwrap();
     g.add_node("Y").unwrap();
 
-    g.add_edge("X", "Y", 3.14).unwrap();
+    g.add_edge("X", "Y", 3.5).unwrap();
 
     for (node, edges) in g.iter() {
         match *node {
             "X" => {
                 assert_eq!(edges.len(), 1);
                 assert_eq!(*edges[0].get_target(), "Y");
-                assert_eq!(*edges[0].get_weight(), 3.14);
+                assert_eq!(*edges[0].get_weight(), 3.5);
             }
             "Y" => {
                 assert!(edges.is_empty());

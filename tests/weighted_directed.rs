@@ -6,9 +6,9 @@ fn add_edge_success() {
     g.add_node('X').unwrap();
     g.add_node('Y').unwrap();
 
-    let edge = g.add_edge('X', 'Y', 3.14).unwrap();
+    let edge = g.add_edge('X', 'Y', 3.5).unwrap();
     assert_eq!(*edge.get_target(), 'Y');
-    assert_eq!(*edge.get_weight(), 3.14);
+    assert_eq!(*edge.get_weight(), 3.5);
 }
 
 #[test]

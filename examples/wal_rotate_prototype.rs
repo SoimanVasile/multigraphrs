@@ -126,11 +126,10 @@ fn wal_background_thread(dir: PathBuf, max_file_size: u64, request_rx: Receiver<
         }
 
         // Sync all if no write error
-        if io_error.is_none() {
-            if let Err(e) = file.sync_all() {
+        if io_error.is_none()
+            && let Err(e) = file.sync_all() {
                 io_error = Some(e);
             }
-        }
 
         // Put the file back if it's still good
         current_file = Some(file);

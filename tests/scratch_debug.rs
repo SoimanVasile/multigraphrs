@@ -13,7 +13,7 @@ fn test_debug_reverse_edges() {
     let mut backend = DiskStorage::<f64>::new(&dir);
     
     // Add nodes 0 to 200
-    for i in 0..=200 {
+    for _i in 0..=200 {
         backend.add_node().unwrap();
     }
     
