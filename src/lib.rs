@@ -18,6 +18,7 @@
 pub mod core;
 pub mod storage;
 pub mod strategies;
+pub mod dictionary;
 
 // Expose the internal types publicly so users can import them easily
 pub use strategies::direction_strategy::DirectionStrategy;
@@ -38,7 +39,8 @@ use storage::storage_backend::StorageBackend;
 use std::{hash::Hash, marker::PhantomData};
 use ahash::{AHashMap, AHashSet};
 
-use crate::storage::adjacency_list;
+use dictionary::dictionary_strategy::DictionaryStrategy;
+use dictionary::ram_dictionary::RamDictionary;
 
 const MAX_CAPACITY_BULK: usize = 131_072; // The max size of a buffer for a bulk operation
 
@@ -53,12 +55,12 @@ const MAX_CAPACITY_BULK: usize = 131_072; // The max size of a buffer for a bulk
 /// * `W`: The type of the edge weights. Must implement `Clone` (allowing floating-point weights).
 /// * `S`: The direction strategy (e.g., `Directed`, `Weighted`).
 /// * `B`: The storage backend determining how data is stored.
-pub struct MultiGraph<K, W, S: DirectionStrategy<W>, B: StorageBackend<W> = RamStorage<W>>
+pub struct MultiGraph<K, W, S: DirectionStrategy<W>, B: StorageBackend<W> = RamStorage<W>, D: DictionaryStrategy<K> = RamDictionary<K> >
 where
     K: Eq + Hash + Clone,
     W: Clone + std::cmp::PartialEq,
 {
-    hashed_nodes: AHashMap<K, u64>,
+    hashed_nodes: D,
     pub(crate) reversed_hashed_nodes: Vec<Option<K>>,
     /// The internal adjacency list mapping a node to its outgoing edges.
     pub(crate) adjacency_list: B,
@@ -89,7 +91,7 @@ where
         MultiGraph {
             adjacency_list: backend,
             _marker: PhantomData,
-            hashed_nodes: AHashMap::new(),
+            hashed_nodes: RamDictionary::new(),
             reversed_hashed_nodes: Vec::new(),
         }
     }
@@ -107,7 +109,7 @@ where
         Self{
             adjacency_list: backend,
             _marker: PhantomData,
-            hashed_nodes: AHashMap::with_capacity(number_of_preallocated_nodes),
+            hashed_nodes: RamDictionary::with_capacity(number_of_preallocated_nodes),
             reversed_hashed_nodes: Vec::with_capacity(number_of_preallocated_nodes),
         }
     }
@@ -271,7 +273,7 @@ where
     /// # Returns
     /// A **copy** of the count (`usize` is `Copy`).
     pub fn node_count(&self) -> usize{
-        self.hashed_nodes.len()
+        self.adjacency_list.node_count()
     }
 
     /// Returns the total number of edges currently in the graph.
