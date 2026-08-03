@@ -64,6 +64,7 @@ where
     pub(crate) reversed_hashed_nodes: Vec<Option<K>>,
     /// The internal adjacency list mapping a node to its outgoing edges.
     pub(crate) adjacency_list: B,
+    pub(crate) node_count: usize,
     /// Marker to keep track of the specific strategy `S` and weight `W`.
     _marker: PhantomData<(S, W)>,
 }
@@ -88,8 +89,10 @@ where
     /// # Returns
     /// An empty graph that **takes ownership** of `backend`.
     pub fn with_backend(backend: B) -> Self {
+        let node_count = backend.node_count();
         MultiGraph {
             adjacency_list: backend,
+            node_count,
             _marker: PhantomData,
             hashed_nodes: RamDictionary::new(),
             reversed_hashed_nodes: Vec::new(),
@@ -106,8 +109,10 @@ where
     ///
     /// This function does not return an error.
     pub fn with_capacity(number_of_preallocated_nodes: usize, backend: B) ->Self{
+        let node_count = backend.node_count();
         Self{
             adjacency_list: backend,
+            node_count,
             _marker: PhantomData,
             hashed_nodes: RamDictionary::with_capacity(number_of_preallocated_nodes),
             reversed_hashed_nodes: Vec::with_capacity(number_of_preallocated_nodes),
@@ -127,6 +132,7 @@ where
             return Err(GraphError::NodeAlreadyExists);
         }
         let node_id = self.adjacency_list.add_node()?;
+        self.node_count += 1;
         
         self.hashed_nodes.insert(source.clone(), node_id);
         if node_id >= self.reversed_hashed_nodes.len() as u64 {
@@ -147,6 +153,8 @@ where
         let nodes_id = adjacency_list.bulk_add_node(&(nodes.len() as u64))?;
 
         let max = nodes_id.iter().max().unwrap();
+        
+        self.node_count += nodes.len();
 
         if *max >= reversed_hashed_nodes.len() as u64 {
             reversed_hashed_nodes.resize(*max as usize + 1, None);
@@ -218,6 +226,7 @@ where
 
         let removed_node = self.reversed_hashed_nodes[index as usize].take().unwrap();
         S::remove_node(&mut self.adjacency_list, index)?;
+        self.node_count -= 1;
         
         Ok(removed_node)
     }
@@ -273,7 +282,7 @@ where
     /// # Returns
     /// A **copy** of the count (`usize` is `Copy`).
     pub fn node_count(&self) -> usize{
-        self.adjacency_list.node_count()
+        self.node_count
     }
 
     /// Returns the total number of edges currently in the graph.

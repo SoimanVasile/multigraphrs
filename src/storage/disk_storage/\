@@ -273,19 +273,13 @@ where
             file_node.writing_bytes_to_mmap(0, SUPER_BLOCK_SIZE as u64, bytes_superblock);
         }
 
-        let super_block_bytes = file_node.reading_bytes(0, 1024);
-        let super_block: SuperBlock = *bytemuck::from_bytes(super_block_bytes)  ;
-
-        let node_count = super_block.node_count;
-        let edge_count = super_block.edge_count;
+        let super_block = 
 
         DiskStorage {
             file_manager_node: file_node,
             file_manager_edge_structure: file_structure,
             file_manager_reverse_edge: file_reverse,
             file_manager_weight_data: file_data,
-            node_count,
-            edge_count,
             wal_manager,
             is_poisoned: AtomicBool::new(false),
             _marker: PhantomData::<W>
@@ -582,7 +576,6 @@ where
             }
 
             super_block.edge_count -= disk_node.number_of_edges;
-            self.edge_count -= disk_node.number_of_edges;
             
             {
                 let mut alloc = AllocatedStruct::new(&mut self.file_manager_edge_structure, &mut super_block, tx.as_deref_mut(), FileId::Structure);
@@ -665,7 +658,6 @@ where
 
         disk_node.number_of_edges -= 1;
         super_block.edge_count -=1;
-        self.edge_count -= 1;
         self.write_disk_node(disk_node, tx)?;
         Ok(())
     }
@@ -787,7 +779,6 @@ where
         let mut superblock: SuperBlock = self.get_super_block();
 
         let new_node_id = self.next_node_id(&mut superblock);
-        self.node_count = superblock.node_count;
         let disk_node: DiskNode = DiskNode::new(new_node_id, u64::MAX, u64::MAX);
         
         self.write_disk_node(&disk_node, Some(&mut tx))
@@ -822,7 +813,6 @@ where
         let mut new_ids: Vec<u64> = Vec::with_capacity(*number_of_nodes as usize);
         for i in 0..*number_of_nodes{
             let id = self.next_node_id(&mut super_block);
-            self.node_count = super_block.node_count;
             new_ids.push(id);
             let disk_node: DiskNode = DiskNode::new(new_ids[i as usize], u64::MAX, u64::MAX);
             self.write_disk_node(&disk_node, Some(&mut tx)).map_err(|e| {
@@ -873,7 +863,6 @@ where
 
         superblock.next_data_free_block += weight_data_bytes.len() as u64;
         superblock.edge_count += 1;
-        self.edge_count += 1;
         
         self.write_superblock(&superblock, Some(&mut tx));
 
@@ -921,7 +910,6 @@ where
 
             super_block.next_data_free_block += weight_data_bytes.len() as u64;
             super_block.edge_count += 1;
-            self.edge_count += 1;
             
             // Update the cached disk node so subsequent edges use the correct edge count!
             seen_disk_node.insert(*node, disk_node);
@@ -1110,7 +1098,6 @@ where
         let mut tx = WalTransaction::new();
         let mut super_block = self.get_super_block();
         super_block.increment_node_counter();
-        self.node_count = super_block.node_count;
         self.write_superblock(&super_block, Some(&mut tx));
         self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
         Ok(())
@@ -1394,7 +1381,6 @@ where
 
         superblock.change_header(node_id);
         superblock.node_count -= 1;
-        self.node_count -= 1;
         self.write_superblock(&superblock, Some(&mut tx));
         
         self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
