@@ -1,4 +1,4 @@
-use multigraphrs::{Directed, GraphError, MultiGraph, Undirected, Weighted, WeightedDirected};
+use multigraphrs::{Directed, MultiGraph, Undirected, Weighted, WeightedDirected};
 
 // ============ contains_node ============
 
@@ -121,7 +121,7 @@ fn edge_count_weighted() {
     let mut g = MultiGraph::<u32, f64, Weighted>::new();
     g.add_node(1).unwrap();
     g.add_node(2).unwrap();
-    g.add_edge(1, 2, 3.14).unwrap();
+    g.add_edge(1, 2, 3.5).unwrap();
     assert_eq!(g.edge_count(), 2); // bidirectional
 }
 
@@ -130,7 +130,7 @@ fn edge_count_weighted_directed() {
     let mut g = MultiGraph::<u32, f64, WeightedDirected>::new();
     g.add_node(1).unwrap();
     g.add_node(2).unwrap();
-    g.add_edge(1, 2, 3.14).unwrap();
+    g.add_edge(1, 2, 3.5).unwrap();
     assert_eq!(g.edge_count(), 1);
 }
 

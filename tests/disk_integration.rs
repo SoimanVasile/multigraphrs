@@ -255,7 +255,7 @@ fn test_end_to_end_weighted_undirected_user_workflow() {
     temp.graph.add_node(3).unwrap();
 
     // Weighted undirected edge 1 <-> 2
-    temp.graph.add_edge(1, 2, 3.14).unwrap();
+    temp.graph.add_edge(1, 2, 3.5).unwrap();
     assert_eq!(temp.graph.degree(&1).unwrap(), 1);
     assert_eq!(temp.graph.degree(&2).unwrap(), 1);
 
@@ -264,7 +264,7 @@ fn test_end_to_end_weighted_undirected_user_workflow() {
     assert_eq!(temp.graph.degree(&1).unwrap(), 2);
 
     // Remove specific weighted edge
-    temp.graph.remove_edge(1, 2, 3.14).unwrap();
+    temp.graph.remove_edge(1, 2, 3.5).unwrap();
     assert_eq!(temp.graph.degree(&1).unwrap(), 1);
     assert_eq!(temp.graph.degree(&2).unwrap(), 0);
 
@@ -309,7 +309,7 @@ fn test_weighted_undirected_disk_parallel_edges() {
     assert_eq!(temp.graph.degree(&2).unwrap(), 2);
 
     // Verify remaining weights are 1.0 and 3.0
-    let mut edges = temp.graph.get_neighbours(&1).unwrap();
+    let edges = temp.graph.get_neighbours(&1).unwrap();
     let mut weights: Vec<f64> = edges.iter().map(|e| *e.get_weight()).collect();
     weights.sort_by(|a, b| a.partial_cmp(b).unwrap());
     assert_eq!(weights, vec![1.0, 3.0]);

@@ -152,8 +152,7 @@ impl FileManager{
     /// Returns `std::io::Error` if file metadata cannot be read, resizing fails, or mapping fails.
     ///
     pub fn increase_file_size(&mut self) -> Result<(), DbError>{
-        let length = self.check_next_size(self.file_len()?)?;
-        self.file.set_len(length)?;
+        let length = self.check_next_size(self.file_len()?)?;        self.file.set_len(length)?;
 
         self.mmap = unsafe{
             MmapOptions::new()
@@ -168,8 +167,7 @@ impl FileManager{
             Ok(length + FOUR_GB)
         }else{
             Ok(length * 2)
-        }
-    }
+        }    }
 
     /// Gets the current length of the file/memory map.
     ///

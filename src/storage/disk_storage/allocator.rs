@@ -306,7 +306,7 @@ impl<'a> AllocatedStruct<'a>
     ///
     /// # Errors
     /// This method does not return an error.
-    pub fn deallocater(&mut self, disk_node: &DiskNode){
+    pub fn deallocator(&mut self, disk_node: &DiskNode){
         // We need to use list_edges_offset or list_reverse_edges_offset based on FileId!
         let (offset, capacity) = match self.file_id {
             FileId::Structure => (disk_node.get_edge_offset(), disk_node.get_capacity()),
@@ -335,7 +335,7 @@ mod tests {
     use crate::storage::disk_storage::disk_edge::DiskEdge;
     use crate::storage::disk_storage::file_manager::FileManager;
     use crate::storage::disk_storage::super_block::SuperBlock;
-    use std::path::PathBuf;
+    
 
     /// Helper: create a FileManager backed by a temp file and a fresh SuperBlock.
     /// Returns (FileManager, SuperBlock, temp_dir) — keep temp_dir alive so the
@@ -740,7 +740,7 @@ mod tests {
 
         // 2. Deallocate them in reverse order
         for node in nodes.iter().rev() {
-            alloc.deallocater(node);
+            alloc.deallocator(node);
         }
 
         // 3. Re-allocate the same sizes. They should exactly hit the heads of buckets 0-5
@@ -748,7 +748,7 @@ mod tests {
         for &size in &sizes {
             let offset = alloc.allocate_structure(&size);
             // Verify that find_index mapped perfectly back to the original offsets
-            let expected_bucket = find_index(&size);
+            let _expected_bucket = find_index(&size);
             // Because we deallocated, the exact offset should have been returned.
             // Since there was only 1 item per bucket, it's just fine to verify it didn't panic.
             assert_ne!(offset, u64::MAX);

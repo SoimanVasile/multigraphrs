@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::core::graph_errors::GraphError;
 use crate::core::db_error::DbError;
 use std::sync::atomic::{AtomicBool, Ordering};
-use crate::storage::disk_storage::allocater::AllocatedStruct;
+use crate::storage::disk_storage::allocator::AllocatedStruct;
 use crate::storage::disk_storage::disk_edge_iterator::DiskEdgeIterator;
 use crate::storage::disk_storage::disk_edge_iterator::DiskReverseEdgeIterator;
 use crate::storage::disk_storage::disk_node::DISK_NODE_INITIAL_CAPACITY;
@@ -19,6 +19,7 @@ use crate::storage::disk_storage::file_manager::FileManager;
 use crate::storage::disk_storage::wal::{WalManager, WalTransaction, WalRecord, FileId};
 
 const SUPER_BLOCK_SIZE: usize = 1024;
+const WAL_BIN_MAX_FILE_SIZE: u64 = 1024 * 1024 * 1024;
 
 
 /// allocates memory for the edges on the respective file_manager
@@ -107,8 +108,7 @@ fn resizing_disk_node(file_manager: &mut FileManager, super_block: &mut SuperBlo
     };
 
     while free_offset + disk_node.capacity > file_manager.file_len()?{
-        if let Some(ref mut t) = tx { t.increase_file_size(FileId::Structure, file_manager.check_next_size(file_manager.file_len()?)?); }
-        file_manager.increase_file_size()?;
+        if let Some(ref mut t) = tx { t.increase_file_size(FileId::Structure, file_manager.check_next_size(file_manager.file_len()?)?); }        file_manager.increase_file_size()?;
     }
     let edge_offset= disk_node.list_edges_offset;
     let edge_offset_end = edge_offset + (disk_node.number_of_edges * size_of::<DiskEdge>() as u64);
@@ -124,7 +124,7 @@ fn resizing_disk_node(file_manager: &mut FileManager, super_block: &mut SuperBlo
         let mut old_node = *disk_node;
         old_node.list_edges_offset = edge_offset;
         old_node.capacity /= 2;
-        alloc.deallocater(&old_node);
+        alloc.deallocator(&old_node);
     }
     disk_node.list_edges_offset = free_offset;
 
@@ -151,8 +151,7 @@ pub fn resizing_disk_node_reverse(file_manager: &mut FileManager, super_block: &
 
     while free_offset + disk_node.reverse_capacity > file_manager.file_len()? {
         if let Some(ref mut t) = tx { t.increase_file_size(FileId::Reverse, file_manager.check_next_size(file_manager.file_len()?)?); }
-        file_manager.increase_file_size()?;
-    }
+        file_manager.increase_file_size()?;    }
 
     let src_end = old_offset + (disk_node.number_of_reverse_edges * size_of::<u64>() as u64);
     if let Some(t) = tx.as_deref_mut() {
@@ -167,7 +166,7 @@ pub fn resizing_disk_node_reverse(file_manager: &mut FileManager, super_block: &
         let mut old_node = *disk_node;
         old_node.list_reverse_edges_offset = old_offset;
         old_node.reverse_capacity /= 2;
-        alloc.deallocater(&old_node);
+        alloc.deallocator(&old_node);
     }
     disk_node.list_reverse_edges_offset = free_offset;
     Ok(())
@@ -257,11 +256,14 @@ where
         let (mut file_data, _) = FileManager::new(data_path)
             .expect("Failed to open the file_data");
 
-        let mut wal_manager = WalManager::new(dir.join("wal.bin"))
-            .expect("Failed to open wal.bin");
+        let mut wal_manager = WalManager::new(dir.to_path_buf())
+            .expect("Failed to initialize WalManager");
             
         wal_manager.replay(&mut file_node, &mut file_structure, &mut file_reverse, &mut file_data)
             .expect("Failed to replay WAL transactions on startup");
+
+        wal_manager.start(WAL_BIN_MAX_FILE_SIZE)
+            .expect("Failed to start WAL background thread");
 
         if node_file_created{
             let initial_super_block = SuperBlock::new();
@@ -278,6 +280,24 @@ where
             is_poisoned: AtomicBool::new(false),
             _marker: PhantomData::<W>
         }
+    }
+
+    /// Commits a WAL transaction and flushes graph data files if the WAL was rotated.
+    ///
+    /// When the background thread rotates the WAL file (because it exceeded
+    /// `max_file_size`), `commit` returns `rotated = true`. This method then
+    /// flushes all four memory-mapped data files so the operations in the now
+    /// `old_wal.bin` are persisted. On the *next* rotation the background thread
+    /// deletes `old_wal.bin` — by that point this flush is guaranteed complete.
+    fn commit_and_flush(&mut self, tx: &WalTransaction) -> Result<(), DbError> {
+        let rotated = self.wal_manager.commit(tx).map_err(DbError::Io)?;
+        if rotated {
+            self.file_manager_node.flush()?;
+            self.file_manager_edge_structure.flush()?;
+            self.file_manager_reverse_edge.flush()?;
+            self.file_manager_weight_data.flush()?;
+        }
+        Ok(())
     }
 
     /// Loads a copy of the [`SuperBlock`] from the start of the node memory map.
@@ -369,8 +389,7 @@ where
         let bytes = disk_node.convert_to_bytes();
 
         while offset + bytes.len() as u64 > self.file_manager_node.file_len()?{
-            if let Some(ref mut t) = tx { t.increase_file_size(FileId::Node, self.file_manager_node.check_next_size(self.file_manager_node.file_len()?)?); }
-            self.file_manager_node.increase_file_size()?;
+            if let Some(ref mut t) = tx { t.increase_file_size(FileId::Node, self.file_manager_node.check_next_size(self.file_manager_node.file_len()?)?); }            self.file_manager_node.increase_file_size()?;
         }
         if let Some(t) = tx {
             t.write_bytes(FileId::Node, offset, bytes);
@@ -506,8 +525,7 @@ where
     pub fn write_weight(&mut self, weight_data_bytes: &[u8], weight_offset: &u64, mut tx: Option<&mut WalTransaction>) -> Result<(), DbError>{
 
         while *weight_offset + weight_data_bytes.len() as u64 > self.file_manager_weight_data.file_len()?{
-            if let Some(ref mut t) = tx { t.increase_file_size(FileId::Data, self.file_manager_weight_data.check_next_size(self.file_manager_weight_data.file_len()?)?); }
-            self.file_manager_weight_data.increase_file_size()?;
+            if let Some(ref mut t) = tx { t.increase_file_size(FileId::Data, self.file_manager_weight_data.check_next_size(self.file_manager_weight_data.file_len()?)?); }            self.file_manager_weight_data.increase_file_size()?;
         }
 
         if let Some(t) = tx {
@@ -557,7 +575,7 @@ where
             
             {
                 let mut alloc = AllocatedStruct::new(&mut self.file_manager_edge_structure, &mut super_block, tx.as_deref_mut(), FileId::Structure);
-                alloc.deallocater(disk_node);
+                alloc.deallocator(disk_node);
             }
 
             disk_node.number_of_edges = 0;
@@ -578,7 +596,7 @@ where
 
             {
                 let mut alloc = AllocatedStruct::new(&mut self.file_manager_reverse_edge, &mut super_block, tx.as_deref_mut(), FileId::Reverse);
-                alloc.deallocater(disk_node);
+                alloc.deallocator(disk_node);
             }
 
             disk_node.number_of_reverse_edges = 0;
@@ -703,8 +721,7 @@ where
                     };
                     fm.copy_within(*src_start, *src_end, *dest_start);
                 }
-                WalRecord::IncreaseFileSize { file_id: _, size: _} => {
-                    // Already applied directly to satisfy length checks during buffer phase.
+                WalRecord::IncreaseFileSize { file_id: _, size: _} => {                    // Already applied directly to satisfy length checks during buffer phase.
                 }
             }
         }
@@ -768,8 +785,7 @@ where
         self.write_superblock(&superblock, Some(&mut tx));
 
         // Commit to WAL and then flush to actual mmap
-        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
 
         Ok(new_node_id)
     }
@@ -803,8 +819,7 @@ where
 
         self.write_superblock(&super_block, Some(&mut tx));
 
-        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
         Ok(new_ids)
     }
 
@@ -826,8 +841,7 @@ where
         let mut superblock = self.get_super_block();
 
         if check_node_allocated(&disk_node, FileId::Structure).map_err(|e| { self.poison(); GraphError::from(e) })? {
-                allocated_disk_node(&mut disk_node, &mut self.file_manager_edge_structure, FileId::Structure, &mut superblock, &mut tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-            }
+                allocated_disk_node(&mut disk_node, &mut self.file_manager_edge_structure, FileId::Structure, &mut superblock, &mut tx).map_err(|e| { self.poison(); GraphError::from(e) })?;            }
 
         let data_offset = superblock.get_free_block_data();
         let disk_edge: DiskEdge = DiskEdge::new(data_offset, std::mem::size_of::<W>() as u64, edge.get_target());
@@ -848,8 +862,7 @@ where
         
         self.write_superblock(&superblock, Some(&mut tx));
 
-        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
         Ok(())
     }
 
@@ -875,8 +888,7 @@ where
                 .entry(*node)
                 .or_insert_with(|| self.get_disk_node(node));
             if check_node_allocated(&disk_node, FileId::Structure).map_err(|e| { self.poison(); GraphError::from(e) })? {
-                allocated_disk_node(&mut disk_node, &mut self.file_manager_edge_structure, FileId::Structure, &mut super_block, &mut tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-            }
+                allocated_disk_node(&mut disk_node, &mut self.file_manager_edge_structure, FileId::Structure, &mut super_block, &mut tx).map_err(|e| { self.poison(); GraphError::from(e) })?;            }
 
             let data_offset = super_block.get_free_block_data();
             let disk_edge: DiskEdge = DiskEdge::new(data_offset, std::mem::size_of::<W>() as u64, edge.get_target());
@@ -903,8 +915,7 @@ where
         if !tx.records.is_empty() {
             self.write_superblock(&super_block, Some(&mut tx));
 
-            self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-            self.apply_wal_transaction(&tx);
+            self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;            self.apply_wal_transaction(&tx);
         }
         Ok(())
     }
@@ -958,9 +969,8 @@ where
             self.swap_remove_disk_edge(&mut disk_node, &(idk as u64), &mut super_block, Some(&mut tx))
                 .map_err(|e| { self.poison(); GraphError::from(e) })?;
             self.write_superblock(&super_block, Some(&mut tx));
-            self.wal_manager.commit(&tx)
-                .map_err(|e| { self.poison(); GraphError::from(e) })?;
-            self.apply_wal_transaction(&tx);
+            self.commit_and_flush(&tx)
+                .map_err(|e| { self.poison(); GraphError::from(e) })?;            self.apply_wal_transaction(&tx);
             return Ok(found_edge);
         }
         Err(GraphError::EdgeDoesntExist)
@@ -996,8 +1006,7 @@ where
             }
         }
         self.write_superblock(&super_block, Some(&mut tx));
-        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
         Ok(())
     }
 
@@ -1024,9 +1033,8 @@ where
             self.swap_remove_disk_edge(&mut disk_node, &(idk as u64), &mut super_block, Some(&mut tx))
                 .map_err(|e| { self.poison(); GraphError::from(e) })?;
             self.write_superblock(&super_block, Some(&mut tx));
-            self.wal_manager.commit(&tx)
-                .map_err(|e| { self.poison(); GraphError::from(e) })?;
-            self.apply_wal_transaction(&tx);
+            self.commit_and_flush(&tx)
+                .map_err(|e| { self.poison(); GraphError::from(e) })?;            self.apply_wal_transaction(&tx);
             return Ok(found_edge);
         }
         Err(GraphError::EdgeDoesntExist)
@@ -1089,8 +1097,7 @@ where
         let mut super_block = self.get_super_block();
         super_block.increment_node_counter();
         self.write_superblock(&super_block, Some(&mut tx));
-        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
         Ok(())
     }
 
@@ -1109,8 +1116,7 @@ where
         let mut tx = WalTransaction::new();
         let mut disk_node = self.get_disk_node(node);
         self.remove_edges_from_node(&mut disk_node, Some(&mut tx)).map_err(|e| { self.poison();  GraphError::Db(e)})?;
-        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
         Ok(())
     }
 
@@ -1143,8 +1149,7 @@ where
                         GraphError::Db(e)
                     })?;
                 self.write_superblock(&super_block, Some(&mut tx));
-                self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-                self.apply_wal_transaction(&tx);
+                self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;                self.apply_wal_transaction(&tx);
                 return Ok(());
             }
         }
@@ -1169,15 +1174,13 @@ where
 
         // First-time initialization: allocate a reverse edge block for this node
         if check_node_allocated(&disk_node, FileId::Reverse).map_err(|e| { self.poison(); GraphError::from(e) })? {
-            allocated_disk_node(&mut disk_node, &mut self.file_manager_reverse_edge, FileId::Reverse, &mut superblock, &mut tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-        }
+            allocated_disk_node(&mut disk_node, &mut self.file_manager_reverse_edge, FileId::Reverse, &mut superblock, &mut tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        }
 
         // Check if adding this reverse edge would overflow the allocated capacity
         self.write_reverse_edge(&mut disk_node, origin, &mut superblock, Some(&mut tx)).map_err(|e| { self.poison(); GraphError::Db(e) })?;
         self.write_superblock(&superblock, Some(&mut tx));
         
-        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
         Ok(())
     }
 
@@ -1209,14 +1212,12 @@ where
                 .map_err(|e|{ 
                     self.poison(); 
                     GraphError::Db(e)
-                })?;
-            
+                })?;            
             seen_disk_node.insert(*target, disk_node);
         };
         self.write_superblock(&super_block, Some(&mut tx));
 
-        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
         Ok(())
     }
 
@@ -1257,8 +1258,7 @@ where
 
         disk_node.number_of_reverse_edges = 0;
         self.write_disk_node(&disk_node, Some(&mut tx)).map_err(|e| { self.poison(); GraphError::Db(e)})?;
-        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
         Ok(())
     }
 
@@ -1292,8 +1292,7 @@ where
                         self.poison();
                         GraphError::Db(e)
                     })?;
-                self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-                self.apply_wal_transaction(&tx);
+                self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;                self.apply_wal_transaction(&tx);
                 return Ok(());
             }
         }
@@ -1352,8 +1351,7 @@ where
             }
         }
 
-        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
         Ok(())
     }
 
@@ -1383,8 +1381,7 @@ where
         superblock.node_count -= 1;
         self.write_superblock(&superblock, Some(&mut tx));
         
-        self.wal_manager.commit(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
         Ok(())
     }
 }
