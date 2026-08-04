@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::path::Path;
+use std::path::PathBuf;
 
 use crate::core::graph_errors::GraphError;
 use crate::core::db_error::DbError;
@@ -39,6 +40,8 @@ fn allocated_disk_node(disk_node: &mut DiskNode, file_manager: &mut FileManager,
         FileId::Reverse => (&mut disk_node.list_reverse_edges_offset, disk_node.reverse_capacity),
         FileId::Node => {return Ok(());},
         FileId::Data => {return Ok(());},
+        FileId::NodeId => {return Ok(());},
+        FileId::NodeIdValue => {return Ok(());}
     };
     *edge_offset = {
         let mut alloc = AllocatedStruct::new(file_manager, super_block, Some(tx), file_id);
@@ -70,6 +73,8 @@ fn check_node_allocated(disk_node: &DiskNode, file_id: FileId) -> Result<bool, D
         FileId::Structure => disk_node.list_edges_offset,
         FileId::Data => return Err(DbError::InvalidFileId(3)),
         FileId::Node => return Err(DbError::InvalidFileId(2)),
+        FileId::NodeId => return Err(DbError::InvalidFileId(4)),
+        FileId::NodeIdValue => return Err(DbError::InvalidFileId(5)),
     };
 
     Ok(edge_offset == u64::MAX)
@@ -182,6 +187,7 @@ where
     pub(crate) file_manager_reverse_edge: FileManager,
     pub(crate) file_manager_weight_data: FileManager,
     pub(crate) wal_manager: WalManager,
+    pub(crate) directory: PathBuf,
     node_count: u64,
     edge_count: u64,
     is_poisoned: AtomicBool,
@@ -248,6 +254,8 @@ where
         let data_path = dir.join("data.bin");
         let node_path = dir.join("node.bin");
         let reverse_structure_path = dir.join("reverse_structure.bin");
+        let node_id_path = dir.join("node_id.bin");
+        let node_id_value_path = dir.join("node_id_data.bin");
 
         let (mut file_node, node_file_created) = FileManager::new(node_path)
             .expect("Failed to open the file_node");
@@ -257,11 +265,16 @@ where
             .expect("Failed to open the file_reverse");
         let (mut file_data, _) = FileManager::new(data_path)
             .expect("Failed to open the file_data");
+        let (mut file_node_id, _) = FileManager::new(node_id_path)
+            .expect("Failed to open the node_id");
+
+        let (mut file_node_value_id, _) = FileManager::new(node_id_value_path)
+            .expect("Failed to open the node_id_value");
 
         let mut wal_manager = WalManager::new(dir.to_path_buf())
             .expect("Failed to initialize WalManager");
             
-        wal_manager.replay(&mut file_node, &mut file_structure, &mut file_reverse, &mut file_data)
+        wal_manager.replay(&mut file_node, &mut file_structure, &mut file_reverse, &mut file_data, &mut file_node_id, &mut file_node_value_id)
             .expect("Failed to replay WAL transactions on startup");
 
         wal_manager.start(WAL_BIN_MAX_FILE_SIZE)
@@ -272,6 +285,7 @@ where
             let bytes_superblock: &[u8] = bytemuck::bytes_of(&initial_super_block);
             file_node.writing_bytes_to_mmap(0, SUPER_BLOCK_SIZE as u64, bytes_superblock);
         }
+
 
         let super_block_bytes = file_node.reading_bytes(0, 1024);
         let super_block: SuperBlock = *bytemuck::from_bytes(super_block_bytes)  ;
@@ -287,6 +301,7 @@ where
             node_count,
             edge_count,
             wal_manager,
+            directory: dir.to_path_buf(),
             is_poisoned: AtomicBool::new(false),
             _marker: PhantomData::<W>
         }
@@ -712,6 +727,7 @@ where
                         FileId::Structure => &mut self.file_manager_edge_structure,
                         FileId::Reverse => &mut self.file_manager_reverse_edge,
                         FileId::Data => &mut self.file_manager_weight_data,
+                        _ => continue,
                     };
                     fm.writing_bytes_to_mmap(*offset, *offset + bytes.len() as u64, bytes);
                 }
@@ -721,6 +737,7 @@ where
                         FileId::Structure => &mut self.file_manager_edge_structure,
                         FileId::Reverse => &mut self.file_manager_reverse_edge,
                         FileId::Data => &mut self.file_manager_weight_data,
+                        _ => continue,
                     };
                     fm.zeroing_mmap(*offset, *end);
                 }
@@ -730,6 +747,7 @@ where
                         FileId::Structure => &mut self.file_manager_edge_structure,
                         FileId::Reverse => &mut self.file_manager_reverse_edge,
                         FileId::Data => &mut self.file_manager_weight_data,
+                        _ => continue,
                     };
                     fm.copy_within(*src_start, *src_end, *dest_start);
                 }

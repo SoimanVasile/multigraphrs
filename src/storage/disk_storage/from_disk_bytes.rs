@@ -56,3 +56,30 @@ impl_from_disk_bytes_numeric!(
     f32, f64
 );
 
+pub trait AsDiskBytes {
+    fn as_disk_bytes(&self) -> Vec<u8>;
+}
+
+impl AsDiskBytes for String {
+    fn as_disk_bytes(&self) -> Vec<u8> {
+        self.as_bytes().to_vec()
+    }
+}
+
+macro_rules! impl_as_disk_bytes_numeric {
+    ($($t:ty),*) => {
+        $(
+            impl AsDiskBytes for $t {
+                fn as_disk_bytes(&self) -> Vec<u8> {
+                    self.to_le_bytes().to_vec()
+                }
+            }
+        )*
+    };
+}
+
+impl_as_disk_bytes_numeric!(
+    u8, u16, u32, u64, u128,
+    i8, i16, i32, i64, i128,
+    f32, f64
+);

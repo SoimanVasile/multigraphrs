@@ -14,6 +14,8 @@ pub enum FileId {
     Structure = 1,
     Reverse = 2,
     Data = 3,
+    NodeId = 4,
+    NodeIdValue = 5,
 }
 
 impl FileId {
@@ -27,6 +29,8 @@ impl FileId {
             1 => Some(FileId::Structure),
             2 => Some(FileId::Reverse),
             3 => Some(FileId::Data),
+            4 => Some(FileId::NodeId),
+            5 => Some(FileId::NodeIdValue),
             _ => None,
         }
     }
@@ -282,11 +286,13 @@ struct DBFiles<'a>{
     file_structure: &'a mut FileManager,
     file_reverse: &'a mut FileManager,
     file_data: &'a mut FileManager,
+    file_node_id: &'a mut FileManager,
+    file_node_value: &'a mut FileManager,
 }
 
 impl<'a> DBFiles<'a>{
-    pub fn new(file_node: &'a mut FileManager, file_structure: &'a mut FileManager, file_reverse: &'a mut FileManager, file_data: &'a mut FileManager) -> Self{
-        Self{file_node, file_structure, file_reverse, file_data}
+    pub fn new(file_node: &'a mut FileManager, file_structure: &'a mut FileManager, file_reverse: &'a mut FileManager, file_data: &'a mut FileManager, file_node_id: &'a mut FileManager, file_node_value: &'a mut FileManager) -> Self{
+        Self{file_node, file_structure, file_reverse, file_data, file_node_id, file_node_value}
     }
 }
 
@@ -301,6 +307,8 @@ fn replay_file(path: &PathBuf, files: &mut DBFiles) -> Result<(), DbError> {
                     FileId::Structure => &mut files.file_structure,
                     FileId::Reverse => &mut files.file_reverse,
                     FileId::Data => &mut files.file_data,
+                    FileId::NodeId => &mut files.file_node_id,
+                    FileId::NodeIdValue => &mut files.file_node_value,
                 };
                 match record {
                     WalRecord::Write { offset, bytes, .. } => {
@@ -367,7 +375,7 @@ pub struct WalRequest {
 ///
 /// Subsequent callers in the same batch receive `rotated = false`
 /// because a single flush is sufficient.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct WalManager {
     dir: PathBuf,
     /// The sender half of the channel to the background thread.
@@ -456,11 +464,13 @@ impl WalManager {
         file_structure: &mut FileManager,
         file_reverse: &mut FileManager,
         file_data: &mut FileManager,
+        file_node_id: &mut FileManager,
+        file_node_value: &mut FileManager,
     ) -> Result<(), DbError> {
         let old_wal_path = self.dir.join("old_wal.bin");
         let wal_path = self.dir.join("wal.bin");
 
-        let mut files = DBFiles::new(file_node, file_structure, file_reverse, file_data);
+        let mut files = DBFiles::new(file_node, file_structure, file_reverse, file_data, file_node_id, file_node_value);
         replay_file(&old_wal_path, &mut files)?;
         replay_file(&wal_path, &mut files)?;
 
