@@ -15,7 +15,6 @@ pub enum FileId {
     Reverse = 2,
     Data = 3,
     NodeId = 4,
-    NodeIdValue = 5,
 }
 
 impl FileId {
@@ -30,7 +29,6 @@ impl FileId {
             2 => Some(FileId::Reverse),
             3 => Some(FileId::Data),
             4 => Some(FileId::NodeId),
-            5 => Some(FileId::NodeIdValue),
             _ => None,
         }
     }
@@ -308,7 +306,6 @@ fn replay_file(path: &PathBuf, files: &mut DBFiles) -> Result<(), DbError> {
                     FileId::Reverse => &mut files.file_reverse,
                     FileId::Data => &mut files.file_data,
                     FileId::NodeId => &mut files.file_node_id,
-                    FileId::NodeIdValue => &mut files.file_node_value,
                 };
                 match record {
                     WalRecord::Write { offset, bytes, .. } => {

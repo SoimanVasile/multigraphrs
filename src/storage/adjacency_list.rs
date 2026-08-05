@@ -282,7 +282,9 @@ where
     }
 
     fn hashed_nodes_insert(&mut self, key: K, node_id: u64) -> Result<(), GraphError> {
-        Ok(self.hashed_nodes.insert(key, node_id))
+        Ok(self.hashed_nodes.insert(key, node_id).map_err(|e| {
+            GraphError::Db(e)
+        })?)
     }
 
     fn hashed_nodes_get(&self,  key: &K) -> Result<Option<u64>, GraphError> {
@@ -290,7 +292,9 @@ where
     }
 
     fn hashed_nodes_remove(&mut self, key: &K) -> Result<Option<u64>, GraphError> {
-        Ok(self.hashed_nodes.remove(key))
+        Ok(self.hashed_nodes.remove(key).map_err(|e| {
+            GraphError::Db(e)
+        })?)
     }
 }
 

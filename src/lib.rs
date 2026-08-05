@@ -7,12 +7,6 @@
 //!
 //! ## Example
 //! ```rust
-//! use multigraphrs::{MultiGraph, Directed};
-//! 
-//! let mut graph = MultiGraph::<&str, u32, Directed>::new();
-//! graph.add_node("A").unwrap();
-//! graph.add_node("B").unwrap();
-//! graph.add_edge("A", "B").unwrap();
 //! ```
 
 pub mod core;

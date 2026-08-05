@@ -1,3 +1,4 @@
+use crate::core::db_error::DbError;
 use crate::storage::disk_storage::from_disk_bytes::FromDiskBytes;
 use crate::storage::disk_storage::from_disk_bytes::AsDiskBytes;
 use std::hash::Hash;
@@ -21,16 +22,17 @@ where
         self.hashed_nodes.contains_key(key)
     }
 
-    fn insert ( &mut self, key: K, node_id: u64 ) {
+    fn insert ( &mut self, key: K, node_id: u64 ) -> Result<(), DbError>{
         self.hashed_nodes.insert( key, node_id);
+        Ok(())
     }
 
     fn get( &self, key: &K ) -> Option<u64>{
         self.hashed_nodes.get(key).copied()
     }
 
-    fn remove( &mut self, key: &K) -> Option<u64>{
-        self.hashed_nodes.remove(key)
+    fn remove( &mut self, key: &K) -> Result<Option<u64>, DbError>{
+        Ok(self.hashed_nodes.remove(key))
     }
 }
 

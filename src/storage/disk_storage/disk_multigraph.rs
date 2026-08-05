@@ -1,3 +1,4 @@
+use crate::dictionary::dictionary_strategy::DictionaryStrategy;
 use crate::dictionary::disk_dictionary::DiskDictionary;
 use crate::storage::disk_storage::from_disk_bytes::AsDiskBytes;
 use std::collections::HashMap;
@@ -44,7 +45,6 @@ fn allocated_disk_node(disk_node: &mut DiskNode, file_manager: &mut FileManager,
         FileId::Node => {return Ok(());},
         FileId::Data => {return Ok(());},
         FileId::NodeId => {return Ok(());},
-        FileId::NodeIdValue => {return Ok(());}
     };
     *edge_offset = {
         let mut alloc = AllocatedStruct::new(file_manager, super_block, Some(tx), file_id);
@@ -77,7 +77,6 @@ fn check_node_allocated(disk_node: &DiskNode, file_id: FileId) -> Result<bool, D
         FileId::Data => return Err(DbError::InvalidFileId(3)),
         FileId::Node => return Err(DbError::InvalidFileId(2)),
         FileId::NodeId => return Err(DbError::InvalidFileId(4)),
-        FileId::NodeIdValue => return Err(DbError::InvalidFileId(5)),
     };
 
     Ok(edge_offset == u64::MAX)
@@ -1430,18 +1429,22 @@ where
     }
 
     fn hashed_nodes_contains_key(&self, key: &K) -> Result<bool, GraphError> {
-        todo!()
+        Ok(self.hashed_nodes.contains_key(key))
     }
 
     fn hashed_nodes_insert(&mut self, key: K, node_id: u64) -> Result<(), GraphError> {
-        todo!()
+        Ok(self.hashed_nodes.insert(key, node_id).map_err(|e| {
+            GraphError::Db(e)
+        })?)
     }
 
     fn hashed_nodes_get(&self,  key: &K) -> Result<Option<u64>, GraphError> {
-        todo!()
+        Ok(self.hashed_nodes.get(key))
     }
 
     fn hashed_nodes_remove(&mut self, key: &K) -> Result<Option<u64>, GraphError> {
-        todo!()
+        Ok(self.hashed_nodes.remove(key).map_err(|e| {
+            GraphError::Db(e)
+        })?)
     }
 }
