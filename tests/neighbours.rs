@@ -1,28 +1,28 @@
-use multigraphrs::{Directed, GraphError, MultiGraph, Undirected, Weighted, WeightedDirected};
+use multigraphrs::{Directed, GraphError, RamMultiGraph, Undirected, Weighted, WeightedDirected};
 
 // --- Directed ---
 
 #[test]
 fn neighbours_directed_basic() {
-    let mut g = MultiGraph::<&str, u32, Directed>::new();
-    g.add_node("A").unwrap();
-    g.add_node("B").unwrap();
-    g.add_node("C").unwrap();
+    let mut g = RamMultiGraph::<String, u32, Directed>::new();
+    g.add_node("A".into()).unwrap();
+    g.add_node("B".into()).unwrap();
+    g.add_node("C".into()).unwrap();
 
-    g.add_edge("A", "B").unwrap();
-    g.add_edge("A", "C").unwrap();
+    g.add_edge("A".into(), "B".into()).unwrap();
+    g.add_edge("A".into(), "C".into()).unwrap();
 
-    let neighbours = g.get_neighbours(&"A").unwrap();
+    let neighbours = g.get_neighbours(&"A".into()).unwrap();
     assert_eq!(neighbours.len(), 2);
 
-    let targets: Vec<&str> = neighbours.iter().map(|e| *e.get_target()).collect();
-    assert!(targets.contains(&"B"));
-    assert!(targets.contains(&"C"));
+    let targets: Vec<String> = neighbours.iter().map(|e| e.get_target().clone()).collect();
+    assert!(targets.contains(&"B".to_string()));
+    assert!(targets.contains(&"C".to_string()));
 }
 
 #[test]
 fn neighbours_directed_no_edges() {
-    let mut g = MultiGraph::<u32, u32, Directed>::new();
+    let mut g = RamMultiGraph::<u32, u32, Directed>::new();
     g.add_node(1).unwrap();
 
     let neighbours = g.get_neighbours(&1).unwrap();
@@ -31,7 +31,7 @@ fn neighbours_directed_no_edges() {
 
 #[test]
 fn neighbours_directed_only_outgoing() {
-    let mut g = MultiGraph::<u32, u32, Directed>::new();
+    let mut g = RamMultiGraph::<u32, u32, Directed>::new();
     g.add_node(1).unwrap();
     g.add_node(2).unwrap();
     g.add_edge(1, 2).unwrap();
@@ -45,7 +45,7 @@ fn neighbours_directed_only_outgoing() {
 
 #[test]
 fn neighbours_undirected_basic() {
-    let mut g = MultiGraph::<u32, u32, Undirected>::new();
+    let mut g = RamMultiGraph::<u32, u32, Undirected>::new();
     g.add_node(1).unwrap();
     g.add_node(2).unwrap();
     g.add_node(3).unwrap();
@@ -66,15 +66,15 @@ fn neighbours_undirected_basic() {
 
 #[test]
 fn neighbours_weighted_directed_basic() {
-    let mut g = MultiGraph::<&str, f64, WeightedDirected>::new();
-    g.add_node("X").unwrap();
-    g.add_node("Y").unwrap();
+    let mut g = RamMultiGraph::<String, f64, WeightedDirected>::new();
+    g.add_node("X".into()).unwrap();
+    g.add_node("Y".into()).unwrap();
 
-    g.add_edge("X", "Y", 3.5).unwrap();
+    g.add_edge("X".into(), "Y".into(), 3.5).unwrap();
 
-    let neighbours = g.get_neighbours(&"X").unwrap();
+    let neighbours = g.get_neighbours(&"X".into()).unwrap();
     assert_eq!(neighbours.len(), 1);
-    assert_eq!(*neighbours[0].get_target(), "Y");
+    assert_eq!(*neighbours[0].get_target(), "Y".to_string().to_string());
     assert_eq!(*neighbours[0].get_weight(), 3.5);
 }
 
@@ -82,7 +82,7 @@ fn neighbours_weighted_directed_basic() {
 
 #[test]
 fn neighbours_weighted_basic() {
-    let mut g = MultiGraph::<u32, i32, Weighted>::new();
+    let mut g = RamMultiGraph::<u32, i32, Weighted>::new();
     g.add_node(10).unwrap();
     g.add_node(20).unwrap();
 
@@ -102,25 +102,25 @@ fn neighbours_weighted_basic() {
 
 #[test]
 fn neighbours_nonexistent_node_directed() {
-    let g = MultiGraph::<u32, u32, Directed>::new();
+    let g = RamMultiGraph::<u32, u32, Directed>::new();
     assert_eq!(g.get_neighbours(&999), Err(GraphError::NodeNotFound));
 }
 
 #[test]
 fn neighbours_nonexistent_node_undirected() {
-    let g = MultiGraph::<u32, u32, Undirected>::new();
+    let g = RamMultiGraph::<u32, u32, Undirected>::new();
     assert_eq!(g.get_neighbours(&1), Err(GraphError::NodeNotFound));
 }
 
 #[test]
 fn neighbours_nonexistent_node_weighted() {
-    let g = MultiGraph::<u32, f64, Weighted>::new();
+    let g = RamMultiGraph::<u32, f64, Weighted>::new();
     assert_eq!(g.get_neighbours(&1), Err(GraphError::NodeNotFound));
 }
 
 #[test]
 fn neighbours_nonexistent_node_weighted_directed() {
-    let g = MultiGraph::<u32, f64, WeightedDirected>::new();
+    let g = RamMultiGraph::<u32, f64, WeightedDirected>::new();
     assert_eq!(g.get_neighbours(&1), Err(GraphError::NodeNotFound));
 }
 
@@ -128,26 +128,26 @@ fn neighbours_nonexistent_node_weighted_directed() {
 
 #[test]
 fn neighbours_after_removing_neighbour() {
-    let mut g = MultiGraph::<&str, u32, Directed>::new();
-    g.add_node("A").unwrap();
-    g.add_node("B").unwrap();
-    g.add_node("C").unwrap();
+    let mut g = RamMultiGraph::<String, u32, Directed>::new();
+    g.add_node("A".into()).unwrap();
+    g.add_node("B".into()).unwrap();
+    g.add_node("C".into()).unwrap();
 
-    g.add_edge("A", "B").unwrap();
-    g.add_edge("A", "C").unwrap();
+    g.add_edge("A".into(), "B".into()).unwrap();
+    g.add_edge("A".into(), "C".into()).unwrap();
 
-    g.remove_node(&"B").unwrap();
+    g.remove_node(&"B".into()).unwrap();
 
-    let neighbours = g.get_neighbours(&"A").unwrap();
+    let neighbours = g.get_neighbours(&"A".into()).unwrap();
     assert_eq!(neighbours.len(), 1);
-    assert_eq!(*neighbours[0].get_target(), "C");
+    assert_eq!(*neighbours[0].get_target(), "C".to_string().to_string());
 }
 
 // --- Parallel edges ---
 
 #[test]
 fn neighbours_with_parallel_edges() {
-    let mut g = MultiGraph::<u32, u32, Directed>::new();
+    let mut g = RamMultiGraph::<u32, u32, Directed>::new();
     g.add_node(1).unwrap();
     g.add_node(2).unwrap();
 

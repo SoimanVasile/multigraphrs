@@ -1,8 +1,8 @@
-use multigraphrs::{MultiGraph, Directed};
+use multigraphrs::{RamMultiGraph, Directed};
 use std::time::Instant;
 
 fn main() {
-    let mut graph = MultiGraph::<String, u32, Directed>::new();
+    let mut graph = RamMultiGraph::<String, u32, Directed>::new();
     let node_count = 10_000_000;
 
     println!("Adding {} String nodes...", node_count);

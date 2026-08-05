@@ -4,7 +4,7 @@ use multigraphrs::core::edge::Edge;
 
 #[test]
 fn test_ram_storage_edge_cases() {
-    let mut storage = RamStorage::<u32>::default(); // testing Default trait
+    let mut storage = RamStorage::<u32, u32>::default(); // testing Default trait
     let node1 = storage.add_node().unwrap();
     let node2 = storage.add_node().unwrap();
 
@@ -45,7 +45,7 @@ fn test_ram_storage_edge_cases() {
 
 #[test]
 fn test_remove_edge_by_target() {
-    let mut storage = RamStorage::<u32>::new();
+    let mut storage = RamStorage::<u32, u32>::new();
     let node1 = storage.add_node().unwrap();
     let node2 = storage.add_node().unwrap();
 

@@ -13,7 +13,7 @@ fn next_test_id() -> usize {
 }
 
 struct TempDiskStorage {
-    pub storage: DiskStorage<u32>,
+    pub storage: DiskStorage<u32, u32>,
     dir: std::path::PathBuf,
 }
 
@@ -25,7 +25,7 @@ impl TempDiskStorage {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 
-        let storage = DiskStorage::<u32>::new(&dir);
+        let storage = DiskStorage::<u32, u32>::new(&dir);
 
         Self { storage, dir }
     }

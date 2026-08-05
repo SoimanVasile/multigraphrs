@@ -1,4 +1,4 @@
-use multigraphrs::{Directed, GraphError, MultiGraph, Undirected, Weighted, WeightedDirected};
+use multigraphrs::{Directed, GraphError, RamMultiGraph, Undirected, Weighted, WeightedDirected};
 
 // ───────────────────────────────────────────────────────────────────────────
 // 1. Basic ID reuse: remove a node, add a new one, the slot gets recycled
@@ -6,30 +6,30 @@ use multigraphrs::{Directed, GraphError, MultiGraph, Undirected, Weighted, Weigh
 
 #[test]
 fn reuse_slot_after_single_removal_directed() {
-    let mut g = MultiGraph::<&str, u32, Directed>::new();
+    let mut g = RamMultiGraph::<String, u32, Directed>::new();
 
-    g.add_node("A").unwrap(); // id 0
-    g.add_node("B").unwrap(); // id 1
-    g.add_node("C").unwrap(); // id 2
+    g.add_node("A".into()).unwrap(); // id 0
+    g.add_node("B".into()).unwrap(); // id 1
+    g.add_node("C".into()).unwrap(); // id 2
 
-    g.remove_node(&"B").unwrap(); // frees id 1
+    g.remove_node(&"B".into()).unwrap(); // frees id 1
 
     // "D" should reuse the freed slot
-    g.add_node("D").unwrap();
+    g.add_node("D".into()).unwrap();
 
     // The graph should still have exactly 3 live nodes
     assert_eq!(g.node_count(), 3);
 
     // All three are queryable
-    assert!(g.contains_node(&"A"));
-    assert!(!g.contains_node(&"B"));
-    assert!(g.contains_node(&"C"));
-    assert!(g.contains_node(&"D"));
+    assert!(g.contains_node(&"A".into()).unwrap());
+    assert!(!g.contains_node(&"B".into()).unwrap());
+    assert!(g.contains_node(&"C".into()).unwrap());
+    assert!(g.contains_node(&"D".into()).unwrap());
 }
 
 #[test]
 fn reuse_slot_after_single_removal_undirected() {
-    let mut g = MultiGraph::<u32, u32, Undirected>::new();
+    let mut g = RamMultiGraph::<u32, u32, Undirected>::new();
 
     g.add_node(1).unwrap();
     g.add_node(2).unwrap();
@@ -39,31 +39,31 @@ fn reuse_slot_after_single_removal_undirected() {
     g.add_node(20).unwrap(); // should reuse slot
 
     assert_eq!(g.node_count(), 3);
-    assert!(g.contains_node(&1));
-    assert!(g.contains_node(&20));
-    assert!(g.contains_node(&3));
-    assert!(!g.contains_node(&2));
+    assert!(g.contains_node(&1).unwrap());
+    assert!(g.contains_node(&20).unwrap());
+    assert!(g.contains_node(&3).unwrap());
+    assert!(!g.contains_node(&2).unwrap());
 }
 
 #[test]
 fn reuse_slot_after_single_removal_weighted() {
-    let mut g = MultiGraph::<&str, f64, Weighted>::new();
+    let mut g = RamMultiGraph::<String, f64, Weighted>::new();
 
-    g.add_node("X").unwrap();
-    g.add_node("Y").unwrap();
+    g.add_node("X".into()).unwrap();
+    g.add_node("Y".into()).unwrap();
 
-    g.remove_node(&"X").unwrap();
-    g.add_node("Z").unwrap(); // reuses X's slot
+    g.remove_node(&"X".into()).unwrap();
+    g.add_node("Z".into()).unwrap(); // reuses X's slot
 
     assert_eq!(g.node_count(), 2);
-    assert!(g.contains_node(&"Y"));
-    assert!(g.contains_node(&"Z"));
-    assert!(!g.contains_node(&"X"));
+    assert!(g.contains_node(&"Y".into()).unwrap());
+    assert!(g.contains_node(&"Z".into()).unwrap());
+    assert!(!g.contains_node(&"X".into()).unwrap());
 }
 
 #[test]
 fn reuse_slot_after_single_removal_weighted_directed() {
-    let mut g = MultiGraph::<u32, i32, WeightedDirected>::new();
+    let mut g = RamMultiGraph::<u32, i32, WeightedDirected>::new();
 
     g.add_node(100).unwrap();
     g.add_node(200).unwrap();
@@ -72,9 +72,9 @@ fn reuse_slot_after_single_removal_weighted_directed() {
     g.add_node(300).unwrap(); // reuses 100's slot
 
     assert_eq!(g.node_count(), 2);
-    assert!(g.contains_node(&200));
-    assert!(g.contains_node(&300));
-    assert!(!g.contains_node(&100));
+    assert!(g.contains_node(&200).unwrap());
+    assert!(g.contains_node(&300).unwrap());
+    assert!(!g.contains_node(&100).unwrap());
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -83,64 +83,64 @@ fn reuse_slot_after_single_removal_weighted_directed() {
 
 #[test]
 fn edges_work_correctly_after_reuse_directed() {
-    let mut g = MultiGraph::<&str, u32, Directed>::new();
+    let mut g = RamMultiGraph::<String, u32, Directed>::new();
 
-    g.add_node("A").unwrap();
-    g.add_node("B").unwrap();
-    g.add_edge("A", "B").unwrap();
+    g.add_node("A".into()).unwrap();
+    g.add_node("B".into()).unwrap();
+    g.add_edge("A".into(), "B".into()).unwrap();
 
     // Remove B (which had edges from A)
-    g.remove_node(&"B").unwrap();
+    g.remove_node(&"B".into()).unwrap();
 
     // A should have no edges left
-    assert_eq!(g.degree(&"A").unwrap(), 0);
+    assert_eq!(g.degree(&"A".into()).unwrap(), 0);
 
     // Add C, which reuses B's slot
-    g.add_node("C").unwrap();
+    g.add_node("C".into()).unwrap();
 
     // A -> C should work fine
-    g.add_edge("A", "C").unwrap();
-    assert_eq!(g.degree(&"A").unwrap(), 1);
-    assert!(g.contains_edge(&"A", &"C"));
-    assert!(!g.contains_edge(&"A", &"B"));
+    g.add_edge("A".into(), "C".into()).unwrap();
+    assert_eq!(g.degree(&"A".into()).unwrap(), 1);
+    assert!(g.contains_edge(&"A".into(), &"C".into()).unwrap());
+    assert!(!g.contains_edge(&"A".into(), &"B".into()).unwrap());
 }
 
 #[test]
 fn edges_work_correctly_after_reuse_undirected() {
-    let mut g = MultiGraph::<&str, u32, Undirected>::new();
+    let mut g = RamMultiGraph::<String, u32, Undirected>::new();
 
-    g.add_node("A").unwrap();
-    g.add_node("B").unwrap();
-    g.add_edge("A", "B").unwrap();
+    g.add_node("A".into()).unwrap();
+    g.add_node("B".into()).unwrap();
+    g.add_edge("A".into(), "B".into()).unwrap();
 
-    assert_eq!(g.degree(&"A").unwrap(), 1);
-    assert_eq!(g.degree(&"B").unwrap(), 1);
+    assert_eq!(g.degree(&"A".into()).unwrap(), 1);
+    assert_eq!(g.degree(&"B".into()).unwrap(), 1);
 
-    g.remove_node(&"B").unwrap();
-    assert_eq!(g.degree(&"A").unwrap(), 0);
+    g.remove_node(&"B".into()).unwrap();
+    assert_eq!(g.degree(&"A".into()).unwrap(), 0);
 
-    g.add_node("C").unwrap();
-    g.add_edge("A", "C").unwrap();
+    g.add_node("C".into()).unwrap();
+    g.add_edge("A".into(), "C".into()).unwrap();
 
-    assert_eq!(g.degree(&"A").unwrap(), 1);
-    assert_eq!(g.degree(&"C").unwrap(), 1);
-    assert!(g.contains_edge(&"A", &"C"));
+    assert_eq!(g.degree(&"A".into()).unwrap(), 1);
+    assert_eq!(g.degree(&"C".into()).unwrap(), 1);
+    assert!(g.contains_edge(&"A".into(), &"C".into()).unwrap());
 }
 
 #[test]
 fn edges_work_correctly_after_reuse_weighted() {
-    let mut g = MultiGraph::<&str, f64, Weighted>::new();
+    let mut g = RamMultiGraph::<String, f64, Weighted>::new();
 
-    g.add_node("A").unwrap();
-    g.add_node("B").unwrap();
-    g.add_edge("A", "B", 3.5).unwrap();
+    g.add_node("A".into()).unwrap();
+    g.add_node("B".into()).unwrap();
+    g.add_edge("A".into(), "B".into(), 3.5).unwrap();
 
-    g.remove_node(&"B").unwrap();
+    g.remove_node(&"B".into()).unwrap();
 
-    g.add_node("C").unwrap();
-    g.add_edge("A", "C", 2.71).unwrap();
+    g.add_node("C".into()).unwrap();
+    g.add_edge("A".into(), "C".into(), 2.71).unwrap();
 
-    let neighbours = g.get_neighbours(&"A").unwrap();
+    let neighbours = g.get_neighbours(&"A".into()).unwrap();
     assert_eq!(neighbours.len(), 1);
     assert_eq!(neighbours[0].get_target(), &"C");
     assert_eq!(neighbours[0].get_weight(), &2.71);
@@ -148,17 +148,17 @@ fn edges_work_correctly_after_reuse_weighted() {
 
 #[test]
 fn edges_work_correctly_after_reuse_weighted_directed() {
-    let mut g = MultiGraph::<&str, i32, WeightedDirected>::new();
+    let mut g = RamMultiGraph::<String, i32, WeightedDirected>::new();
 
-    g.add_node("src").unwrap();
-    g.add_node("dst").unwrap();
-    g.add_edge("src", "dst", 42).unwrap();
+    g.add_node("src".into()).unwrap();
+    g.add_node("dst".into()).unwrap();
+    g.add_edge("src".into(), "dst".into(), 42).unwrap();
 
-    g.remove_node(&"dst").unwrap();
-    g.add_node("new_dst").unwrap();
-    g.add_edge("src", "new_dst", 99).unwrap();
+    g.remove_node(&"dst".into()).unwrap();
+    g.add_node("new_dst".into()).unwrap();
+    g.add_edge("src".into(), "new_dst".into(), 99).unwrap();
 
-    let nb = g.get_neighbours(&"src").unwrap();
+    let nb = g.get_neighbours(&"src".into()).unwrap();
     assert_eq!(nb.len(), 1);
     assert_eq!(nb[0].get_target(), &"new_dst");
     assert_eq!(nb[0].get_weight(), &99);
@@ -170,7 +170,7 @@ fn edges_work_correctly_after_reuse_weighted_directed() {
 
 #[test]
 fn multiple_removals_then_readd() {
-    let mut g = MultiGraph::<u32, u32, Directed>::new();
+    let mut g = RamMultiGraph::<u32, u32, Directed>::new();
 
     // Add 5 nodes (ids 0..4)
     for i in 0..5 {
@@ -191,23 +191,23 @@ fn multiple_removals_then_readd() {
     assert_eq!(g.node_count(), 5);
 
     // Original survivors are still there
-    assert!(g.contains_node(&0));
-    assert!(g.contains_node(&2));
+    assert!(g.contains_node(&0).unwrap());
+    assert!(g.contains_node(&2).unwrap());
 
     // New nodes are present
-    assert!(g.contains_node(&10));
-    assert!(g.contains_node(&11));
-    assert!(g.contains_node(&12));
+    assert!(g.contains_node(&10).unwrap());
+    assert!(g.contains_node(&11).unwrap());
+    assert!(g.contains_node(&12).unwrap());
 
     // Removed nodes are gone
-    assert!(!g.contains_node(&1));
-    assert!(!g.contains_node(&3));
-    assert!(!g.contains_node(&4));
+    assert!(!g.contains_node(&1).unwrap());
+    assert!(!g.contains_node(&3).unwrap());
+    assert!(!g.contains_node(&4).unwrap());
 }
 
 #[test]
 fn exhaust_free_list_then_grow() {
-    let mut g = MultiGraph::<u32, u32, Directed>::new();
+    let mut g = RamMultiGraph::<u32, u32, Directed>::new();
 
     g.add_node(0).unwrap();
     g.add_node(1).unwrap();
@@ -224,9 +224,9 @@ fn exhaust_free_list_then_grow() {
     g.add_node(12).unwrap();
 
     assert_eq!(g.node_count(), 3);
-    assert!(g.contains_node(&10));
-    assert!(g.contains_node(&11));
-    assert!(g.contains_node(&12));
+    assert!(g.contains_node(&10).unwrap());
+    assert!(g.contains_node(&11).unwrap());
+    assert!(g.contains_node(&12).unwrap());
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -235,7 +235,7 @@ fn exhaust_free_list_then_grow() {
 
 #[test]
 fn interleaved_add_remove_cycle() {
-    let mut g = MultiGraph::<u32, u32, Directed>::new();
+    let mut g = RamMultiGraph::<u32, u32, Directed>::new();
 
     // Round 1: add + remove
     g.add_node(1).unwrap();
@@ -246,8 +246,8 @@ fn interleaved_add_remove_cycle() {
     // Round 2: re-add on recycled slot + new edges
     g.add_node(3).unwrap(); // reuses 1's slot
     g.add_edge(3, 2).unwrap();
-    assert!(g.contains_edge(&3, &2));
-    assert!(!g.contains_node(&1));
+    assert!(g.contains_edge(&3, &2).unwrap());
+    assert!(!g.contains_node(&1).unwrap());
 
     // Round 3: remove and re-add again
     g.remove_node(&2).unwrap();
@@ -255,27 +255,27 @@ fn interleaved_add_remove_cycle() {
     g.add_edge(3, 4).unwrap();
 
     assert_eq!(g.node_count(), 2);
-    assert!(g.contains_edge(&3, &4));
-    assert!(!g.contains_node(&2));
+    assert!(g.contains_edge(&3, &4).unwrap());
+    assert!(!g.contains_node(&2).unwrap());
 }
 
 #[test]
 fn repeated_add_remove_same_key() {
-    let mut g = MultiGraph::<&str, u32, Directed>::new();
+    let mut g = RamMultiGraph::<String, u32, Directed>::new();
 
     for _ in 0..10 {
-        g.add_node("ping").unwrap();
-        g.remove_node(&"ping").unwrap();
+        g.add_node("ping".into()).unwrap();
+        g.remove_node(&"ping".into()).unwrap();
     }
 
     // After all cycles, graph should be empty
     assert_eq!(g.node_count(), 0);
-    assert!(!g.contains_node(&"ping"));
+    assert!(!g.contains_node(&"ping".into()).unwrap());
 
     // We should still be able to add it back
-    g.add_node("ping").unwrap();
+    g.add_node("ping".into()).unwrap();
     assert_eq!(g.node_count(), 1);
-    assert!(g.contains_node(&"ping"));
+    assert!(g.contains_node(&"ping".into()).unwrap());
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -284,7 +284,7 @@ fn repeated_add_remove_same_key() {
 
 #[test]
 fn edge_count_stays_consistent_through_reuse() {
-    let mut g = MultiGraph::<u32, u32, Directed>::new();
+    let mut g = RamMultiGraph::<u32, u32, Directed>::new();
 
     g.add_node(0).unwrap();
     g.add_node(1).unwrap();
@@ -311,21 +311,21 @@ fn edge_count_stays_consistent_through_reuse() {
 
 #[test]
 fn edge_count_undirected_with_reuse() {
-    let mut g = MultiGraph::<&str, u32, Undirected>::new();
+    let mut g = RamMultiGraph::<String, u32, Undirected>::new();
 
-    g.add_node("A").unwrap();
-    g.add_node("B").unwrap();
-    g.add_node("C").unwrap();
-    g.add_edge("A", "B").unwrap(); // 2 internal edges (both dirs)
-    g.add_edge("B", "C").unwrap(); // 2 more
+    g.add_node("A".into()).unwrap();
+    g.add_node("B".into()).unwrap();
+    g.add_node("C".into()).unwrap();
+    g.add_edge("A".into(), "B".into()).unwrap(); // 2 internal edges (both dirs)
+    g.add_edge("B".into(), "C".into()).unwrap(); // 2 more
 
     assert_eq!(g.edge_count(), 4); // undirected = 2 internal edges per logical edge
 
-    g.remove_node(&"B").unwrap(); // removes all 4 edges
+    g.remove_node(&"B".into()).unwrap(); // removes all 4 edges
     assert_eq!(g.edge_count(), 0);
 
-    g.add_node("D").unwrap(); // reuses B's slot
-    g.add_edge("A", "D").unwrap();
+    g.add_node("D".into()).unwrap(); // reuses B's slot
+    g.add_edge("A".into(), "D".into()).unwrap();
     assert_eq!(g.edge_count(), 2);
 }
 
@@ -335,42 +335,42 @@ fn edge_count_undirected_with_reuse() {
 
 #[test]
 fn neighbours_after_reuse_show_new_key() {
-    let mut g = MultiGraph::<&str, u32, Directed>::new();
+    let mut g = RamMultiGraph::<String, u32, Directed>::new();
 
-    g.add_node("A").unwrap();
-    g.add_node("OLD").unwrap();
-    g.add_edge("A", "OLD").unwrap();
+    g.add_node("A".into()).unwrap();
+    g.add_node("OLD".into()).unwrap();
+    g.add_edge("A".into(), "OLD".into()).unwrap();
 
-    g.remove_node(&"OLD").unwrap();
-    g.add_node("NEW").unwrap(); // reuses OLD's slot
+    g.remove_node(&"OLD".into()).unwrap();
+    g.add_node("NEW".into()).unwrap(); // reuses OLD's slot
 
     // A has no edges (the A -> OLD edge was cleaned up on removal)
-    assert_eq!(g.degree(&"A").unwrap(), 0);
+    assert_eq!(g.degree(&"A".into()).unwrap(), 0);
 
     // Build fresh edge
-    g.add_edge("A", "NEW").unwrap();
+    g.add_edge("A".into(), "NEW".into()).unwrap();
 
-    let nb = g.get_neighbours(&"A").unwrap();
+    let nb = g.get_neighbours(&"A".into()).unwrap();
     assert_eq!(nb.len(), 1);
     assert_eq!(nb[0].get_target(), &"NEW"); // must resolve to "NEW", not "OLD"
 }
 
 #[test]
 fn neighbours_weighted_after_reuse() {
-    let mut g = MultiGraph::<&str, f64, Weighted>::new();
+    let mut g = RamMultiGraph::<String, f64, Weighted>::new();
 
-    g.add_node("A").unwrap();
-    g.add_node("B").unwrap();
-    g.add_node("C").unwrap();
-    g.add_edge("A", "B", 1.0).unwrap();
-    g.add_edge("A", "C", 2.0).unwrap();
+    g.add_node("A".into()).unwrap();
+    g.add_node("B".into()).unwrap();
+    g.add_node("C".into()).unwrap();
+    g.add_edge("A".into(), "B".into(), 1.0).unwrap();
+    g.add_edge("A".into(), "C".into(), 2.0).unwrap();
 
-    g.remove_node(&"B").unwrap();
-    g.add_node("D").unwrap(); // reuses B's slot
+    g.remove_node(&"B".into()).unwrap();
+    g.add_node("D".into()).unwrap(); // reuses B's slot
 
-    g.add_edge("A", "D", 5.0).unwrap();
+    g.add_edge("A".into(), "D".into(), 5.0).unwrap();
 
-    let mut nb = g.get_neighbours(&"A").unwrap();
+    let mut nb = g.get_neighbours(&"A".into()).unwrap();
     nb.sort_by(|a, b| a.get_weight().partial_cmp(b.get_weight()).unwrap());
 
     // Should have C (2.0) and D (5.0)
@@ -387,28 +387,28 @@ fn neighbours_weighted_after_reuse() {
 
 #[test]
 fn iterator_skips_removed_slots_and_shows_reused() {
-    let mut g = MultiGraph::<&str, u32, Directed>::new();
+    let mut g = RamMultiGraph::<String, u32, Directed>::new();
 
-    g.add_node("A").unwrap();
-    g.add_node("B").unwrap();
-    g.add_node("C").unwrap();
+    g.add_node("A".into()).unwrap();
+    g.add_node("B".into()).unwrap();
+    g.add_node("C".into()).unwrap();
 
-    g.remove_node(&"B").unwrap();
+    g.remove_node(&"B".into()).unwrap();
 
     // Before reuse: iterator should yield A and C only
-    let keys_before: Vec<&str> = g.iter().map(|(k, _)| k.clone()).collect();
+    let keys_before: Vec<String> = g.iter().map(|(k, _)| k.clone()).collect();
     assert_eq!(keys_before.len(), 2);
-    assert!(keys_before.contains(&"A"));
-    assert!(keys_before.contains(&"C"));
+    assert!(keys_before.contains(&"A".to_string()));
+    assert!(keys_before.contains(&"C".to_string()));
 
     // After reuse
-    g.add_node("D").unwrap();
-    let keys_after: Vec<&str> = g.iter().map(|(k, _)| k.clone()).collect();
+    g.add_node("D".into()).unwrap();
+    let keys_after: Vec<String> = g.iter().map(|(k, _)| k.clone()).collect();
     assert_eq!(keys_after.len(), 3);
-    assert!(keys_after.contains(&"A"));
-    assert!(keys_after.contains(&"C"));
-    assert!(keys_after.contains(&"D"));
-    assert!(!keys_after.contains(&"B"));
+    assert!(keys_after.contains(&"A".to_string()));
+    assert!(keys_after.contains(&"C".to_string()));
+    assert!(keys_after.contains(&"D".to_string()));
+    assert!(!keys_after.contains(&"B".to_string()));
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -417,7 +417,7 @@ fn iterator_skips_removed_slots_and_shows_reused() {
 
 #[test]
 fn stress_add_remove_readd() {
-    let mut g = MultiGraph::<u32, u32, Directed>::new();
+    let mut g = RamMultiGraph::<u32, u32, Directed>::new();
 
     let n = 500;
 
@@ -441,19 +441,19 @@ fn stress_add_remove_readd() {
 
     // Verify: even originals are gone, odd originals survive, new keys present
     for i in (0..n).step_by(2) {
-        assert!(!g.contains_node(&i), "removed node {} should be gone", i);
+        assert!(!g.contains_node(&i).unwrap(), "removed node {} should be gone", i);
     }
     for i in (1..n).step_by(2) {
-        assert!(g.contains_node(&i), "surviving node {} should exist", i);
+        assert!(g.contains_node(&i).unwrap(), "surviving node {} should exist", i);
     }
     for i in 0..(n / 2) {
-        assert!(g.contains_node(&(n + i)), "new node {} should exist", n + i);
+        assert!(g.contains_node(&(n + i)).unwrap(), "new node {} should exist", n + i);
     }
 }
 
 #[test]
 fn stress_edges_survive_reuse() {
-    let mut g = MultiGraph::<u32, u32, Directed>::new();
+    let mut g = RamMultiGraph::<u32, u32, Directed>::new();
 
     // Build a chain: 0 -> 1 -> 2 -> ... -> 9
     for i in 0..10 {
@@ -474,10 +474,10 @@ fn stress_edges_survive_reuse() {
     g.add_edge(50, 6).unwrap();
 
     assert_eq!(g.edge_count(), 9);
-    assert!(g.contains_edge(&4, &50));
-    assert!(g.contains_edge(&50, &6));
-    assert!(!g.contains_edge(&4, &5));
-    assert!(!g.contains_edge(&5, &6));
+    assert!(g.contains_edge(&4, &50).unwrap());
+    assert!(g.contains_edge(&50, &6).unwrap());
+    assert!(!g.contains_edge(&4, &5).unwrap());
+    assert!(!g.contains_edge(&5, &6).unwrap());
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -486,7 +486,7 @@ fn stress_edges_survive_reuse() {
 
 #[test]
 fn remove_all_nodes_then_rebuild() {
-    let mut g = MultiGraph::<u32, u32, Directed>::new();
+    let mut g = RamMultiGraph::<u32, u32, Directed>::new();
 
     for i in 0..5 {
         g.add_node(i).unwrap();
@@ -512,8 +512,8 @@ fn remove_all_nodes_then_rebuild() {
 
     assert_eq!(g.node_count(), 5);
     assert_eq!(g.edge_count(), 4);
-    assert!(g.contains_edge(&100, &101));
-    assert!(g.contains_edge(&103, &104));
+    assert!(g.contains_edge(&100, &101).unwrap());
+    assert!(g.contains_edge(&103, &104).unwrap());
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -522,24 +522,24 @@ fn remove_all_nodes_then_rebuild() {
 
 #[test]
 fn can_readd_same_key_after_removal() {
-    let mut g = MultiGraph::<&str, u32, Directed>::new();
+    let mut g = RamMultiGraph::<String, u32, Directed>::new();
 
-    g.add_node("A").unwrap();
-    g.remove_node(&"A").unwrap();
+    g.add_node("A".into()).unwrap();
+    g.remove_node(&"A".into()).unwrap();
 
     // Re-adding the same key should succeed
-    assert_eq!(g.add_node("A"), Ok("A"));
-    assert!(g.contains_node(&"A"));
+    assert_eq!(g.add_node("A".into()), Ok("A".to_string()));
+    assert!(g.contains_node(&"A".into()).unwrap());
     assert_eq!(g.node_count(), 1);
 }
 
 #[test]
 fn cannot_add_duplicate_without_removal() {
-    let mut g = MultiGraph::<&str, u32, Directed>::new();
+    let mut g = RamMultiGraph::<String, u32, Directed>::new();
 
-    g.add_node("A").unwrap();
+    g.add_node("A".into()).unwrap();
     // Without removing, should fail
-    assert_eq!(g.add_node("A"), Err(GraphError::NodeAlreadyExists));
+    assert_eq!(g.add_node("A".into()), Err(GraphError::NodeAlreadyExists));
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -548,7 +548,7 @@ fn cannot_add_duplicate_without_removal() {
 
 #[test]
 fn self_loop_on_reused_slot() {
-    let mut g = MultiGraph::<u32, u32, Directed>::new();
+    let mut g = RamMultiGraph::<u32, u32, Directed>::new();
 
     g.add_node(0).unwrap();
     g.add_node(1).unwrap();
@@ -557,7 +557,7 @@ fn self_loop_on_reused_slot() {
     g.add_node(2).unwrap(); // reuses slot 1
     g.add_edge(2, 2).unwrap(); // self-loop
 
-    assert!(g.contains_edge(&2, &2));
+    assert!(g.contains_edge(&2, &2).unwrap());
     assert_eq!(g.degree(&2).unwrap(), 1);
 
     let nb = g.get_neighbours(&2).unwrap();
@@ -571,31 +571,31 @@ fn self_loop_on_reused_slot() {
 
 #[test]
 fn full_lifecycle_weighted_directed() {
-    let mut g = MultiGraph::<&str, f64, WeightedDirected>::new();
+    let mut g = RamMultiGraph::<String, f64, WeightedDirected>::new();
 
-    g.add_node("alpha").unwrap();
-    g.add_node("beta").unwrap();
-    g.add_node("gamma").unwrap();
+    g.add_node("alpha".into()).unwrap();
+    g.add_node("beta".into()).unwrap();
+    g.add_node("gamma".into()).unwrap();
 
-    g.add_edge("alpha", "beta", 1.5).unwrap();
-    g.add_edge("beta", "gamma", 2.5).unwrap();
-    g.add_edge("gamma", "alpha", 3.5).unwrap();
+    g.add_edge("alpha".into(), "beta".into(), 1.5).unwrap();
+    g.add_edge("beta".into(), "gamma".into(), 2.5).unwrap();
+    g.add_edge("gamma".into(), "alpha".into(), 3.5).unwrap();
 
     assert_eq!(g.edge_count(), 3);
 
     // Remove beta
-    g.remove_node(&"beta").unwrap();
+    g.remove_node(&"beta".into()).unwrap();
     assert_eq!(g.edge_count(), 1); // only gamma -> alpha
     assert_eq!(g.node_count(), 2);
 
     // Add delta on beta's recycled slot
-    g.add_node("delta").unwrap();
-    g.add_edge("alpha", "delta", 10.0).unwrap();
-    g.add_edge("delta", "gamma", 20.0).unwrap();
+    g.add_node("delta".into()).unwrap();
+    g.add_edge("alpha".into(), "delta".into(), 10.0).unwrap();
+    g.add_edge("delta".into(), "gamma".into(), 20.0).unwrap();
 
     assert_eq!(g.edge_count(), 3);
-    assert!(g.contains_edge(&"alpha", &"delta"));
-    assert!(g.contains_edge(&"delta", &"gamma"));
-    assert!(g.contains_edge(&"gamma", &"alpha"));
-    assert!(!g.contains_edge(&"alpha", &"beta"));
+    assert!(g.contains_edge(&"alpha".into(), &"delta".into()).unwrap());
+    assert!(g.contains_edge(&"delta".into(), &"gamma".into()).unwrap());
+    assert!(g.contains_edge(&"gamma".into(), &"alpha".into()).unwrap());
+    assert!(!g.contains_edge(&"alpha".into(), &"beta".into()).unwrap());
 }

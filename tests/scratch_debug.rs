@@ -10,7 +10,7 @@ fn test_debug_reverse_edges() {
     let _ = fs::remove_dir_all(&dir); // Clean up if exists from previous run
     fs::create_dir_all(&dir).unwrap();
 
-    let mut backend = DiskStorage::<f64>::new(&dir);
+    let mut backend = DiskStorage::<u64, u32>::new(&dir);
     
     // Add nodes 0 to 200
     for _i in 0..=200 {
