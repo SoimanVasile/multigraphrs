@@ -1,3 +1,5 @@
+use crate::storage::disk_storage::from_disk_bytes::FromDiskBytes;
+use crate::storage::disk_storage::from_disk_bytes::AsDiskBytes;
 use std::hash::Hash;
 
 use ahash::AHashMap;
@@ -6,14 +8,14 @@ use crate::dictionary::dictionary_strategy::DictionaryStrategy;
 
 pub struct RamDictionary<K>
 where
-    K: Clone + Hash + Eq
+    K: Clone + Hash + Eq + AsDiskBytes + FromDiskBytes
 {
     hashed_nodes: AHashMap<K, u64>
 }
 
 impl<K> DictionaryStrategy<K> for RamDictionary<K>
 where
-    K: Clone + Hash + Eq
+    K: Clone + Hash + Eq + AsDiskBytes + FromDiskBytes
 {
     fn contains_key (&self, key: &K ) -> bool {
         self.hashed_nodes.contains_key(key)
@@ -23,8 +25,8 @@ where
         self.hashed_nodes.insert( key, node_id);
     }
 
-    fn get( &self, key: &K ) -> Option<&u64>{
-        self.hashed_nodes.get(key)
+    fn get( &self, key: &K ) -> Option<u64>{
+        self.hashed_nodes.get(key).copied()
     }
 
     fn remove( &mut self, key: &K) -> Option<u64>{
@@ -34,7 +36,7 @@ where
 
 impl<K> RamDictionary<K>
 where
-    K: Clone + Eq + Hash
+    K: Clone + Eq + Hash + AsDiskBytes + FromDiskBytes
 {
     pub fn new() -> Self{
         Self { hashed_nodes: AHashMap::new()}

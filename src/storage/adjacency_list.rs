@@ -1,4 +1,9 @@
+use crate::dictionary::dictionary_strategy::DictionaryStrategy;
+use crate::dictionary::ram_dictionary::RamDictionary;
+use crate::storage::disk_storage::from_disk_bytes::FromDiskBytes;
+use crate::storage::disk_storage::from_disk_bytes::AsDiskBytes;
 use std::collections::VecDeque;
+use std::hash::Hash;
 
 use crate::core::edge::Edge;
 use crate::core::graph_errors::GraphError;
@@ -8,9 +13,10 @@ use crate::storage::storage_backend::StorageBackend;
 ///
 /// All data lives in RAM. This is the default backend for `MultiGraph` and
 /// is the fastest option for graphs that fit in memory.
-pub struct RamStorage<W>
+pub struct RamStorage<K, W>
 where
-    W: Clone + std::cmp::PartialEq,
+    W: Clone + std::cmp::PartialEq + AsDiskBytes + FromDiskBytes,
+    K: Clone + Eq + Hash + AsDiskBytes + FromDiskBytes,
 {
     adjacency_list: Vec<Vec<Edge<W>>>,
     /// Tracks incoming edges: reverse_adjacency_list[node] = list of nodes that have edges TO this node.
@@ -19,24 +25,27 @@ where
     number_of_nodes: usize,
     number_of_edges: usize,
     removed_ids: VecDeque<u64>,
+    hashed_nodes: RamDictionary<K>,
 }
 
-impl<W> RamStorage<W>
+impl<K, W> RamStorage<K, W>
 where
-    W: Clone + std::cmp::PartialEq,
+    W: Clone + std::cmp::PartialEq + AsDiskBytes + FromDiskBytes,
+    K: Clone + Eq + Hash + AsDiskBytes + FromDiskBytes,
 {
     /// Creates a new, empty `RamStorage` with no pre-allocated capacity.
     ///
     /// # Returns
     /// An owned, empty `RamStorage` instance.
     ///
-    pub fn new() -> RamStorage<W>{
-        RamStorage{
+    pub fn new() -> Self {
+        Self {
             adjacency_list: Vec::new(),
             reverse_adjacency_list: Vec::new(),
             number_of_nodes: 0,
             number_of_edges: 0,
             removed_ids: VecDeque::new(),
+            hashed_nodes: RamDictionary::new(),
         }
     }
 
@@ -52,9 +61,10 @@ where
     }
 }
 
-impl<W> StorageBackend<W> for RamStorage<W>
+impl<K, W> StorageBackend<K, W> for RamStorage<K, W>
 where
-    W: Clone + std::cmp::PartialEq,
+    W: Clone + std::cmp::PartialEq + AsDiskBytes + FromDiskBytes,
+    K: Clone + Eq + AsDiskBytes + FromDiskBytes + Hash,
 {
     type EdgeIter<'a> = std::vec::IntoIter<Edge<W>> where Self: 'a, W: 'a;
 
@@ -131,7 +141,7 @@ where
     /// # Panics
     /// Panics if the `node` index is out of bounds.
     ///
-    fn get_edges<'a>(&self, node: &u64) -> Self::EdgeIter<'a> where W: 'a{
+    fn get_edges<'a>(&self, node: &u64) -> Self::EdgeIter<'a> where W: 'a, K: 'a{
         self.adjacency_list[*node as usize].clone().into_iter()
     }
 
@@ -266,11 +276,28 @@ where
         self.adjacency_list[*node_id as usize].clear();
         Ok(())
     }
+    
+    fn hashed_nodes_contains_key(&self, key: &K) -> Result<bool, GraphError> {
+        Ok(self.hashed_nodes.contains_key(key))
+    }
+
+    fn hashed_nodes_insert(&mut self, key: K, node_id: u64) -> Result<(), GraphError> {
+        Ok(self.hashed_nodes.insert(key, node_id))
+    }
+
+    fn hashed_nodes_get(&self,  key: &K) -> Result<Option<u64>, GraphError> {
+        Ok(self.hashed_nodes.get(key))
+    }
+
+    fn hashed_nodes_remove(&mut self, key: &K) -> Result<Option<u64>, GraphError> {
+        Ok(self.hashed_nodes.remove(key))
+    }
 }
 
-impl<W> Default for RamStorage<W>
+impl<K, W> Default for RamStorage<K, W>
 where
-    W: Clone + std::cmp::PartialEq,
+    W: Clone + std::cmp::PartialEq + AsDiskBytes + FromDiskBytes,
+    K: Clone + Eq + Hash + AsDiskBytes + FromDiskBytes,
 {
     fn default() -> Self{
         Self::new()

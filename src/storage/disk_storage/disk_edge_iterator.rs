@@ -1,3 +1,6 @@
+use std::hash::Hash;
+
+use crate::storage::disk_storage::from_disk_bytes::AsDiskBytes;
 use crate::storage::disk_storage::disk_edge::DiskEdge;
 use crate::storage::disk_storage::from_disk_bytes::FromDiskBytes;
 use crate::storage::disk_storage::disk_multigraph::DiskStorage;
@@ -12,18 +15,20 @@ use crate::Edge;
 /// Each call to [`next()`](Iterator::next) returns an **owned** `Edge<W>`
 /// (weight is deserialized via [`FromDiskBytes`]).
 #[derive(Clone, Debug)]
-pub struct DiskEdgeIterator<'a, W>
+pub struct DiskEdgeIterator<'a, K, W>
 where
-    W: Clone + std::cmp::PartialEq + FromDiskBytes,
+    W: Clone + std::cmp::PartialEq + FromDiskBytes + AsDiskBytes,
+    K: Clone + Hash + Eq + AsDiskBytes + FromDiskBytes,
 {
-    mmap_ref: &'a DiskStorage<W>,
+    mmap_ref: &'a DiskStorage<K, W>,
     current_offset: u64,
     edges_left: u64,
 }
 
-impl<'a, W> DiskEdgeIterator<'a, W>
+impl<'a, K, W> DiskEdgeIterator<'a, K, W>
 where
-    W: Clone + std::cmp::PartialEq + FromDiskBytes,
+    W: Clone + std::cmp::PartialEq + FromDiskBytes + AsDiskBytes,
+    K: Clone + Eq + Hash + FromDiskBytes + AsDiskBytes,
 {
     /// Creates a new `DiskEdgeIterator` starting at the given offset.
     ///
@@ -34,13 +39,15 @@ where
     ///
     /// # Errors
     /// This method does not return an error.
-    pub fn new(mmap_ref: &'a DiskStorage<W>, offset: &u64, number_of_edges: &u64) -> DiskEdgeIterator<'a, W>{
+    pub fn new(mmap_ref: &'a DiskStorage<K, W>, offset: &u64, number_of_edges: &u64) -> DiskEdgeIterator<'a, K, W>{
         DiskEdgeIterator{mmap_ref, current_offset: *offset, edges_left: *number_of_edges}
     }
 }
-impl<'a, W> Iterator for DiskEdgeIterator<'a, W>
+impl<'a, K, W> Iterator for DiskEdgeIterator<'a, K, W>
 where
-    W: Clone + PartialEq + FromDiskBytes{
+    W: Clone + PartialEq + FromDiskBytes + AsDiskBytes,
+    K: Clone + Eq + Hash + FromDiskBytes + AsDiskBytes,
+{
     type Item=Edge<W>;
 
     /// Advances the iterator and returns the next `Edge<W>`.
@@ -83,18 +90,20 @@ where
 /// Reads `u64` node IDs sequentially from the reverse structure memory map.
 /// Each call to [`next()`](Iterator::next) returns an **owned** `u64`
 /// (`u64` is `Copy`).
-pub struct DiskReverseEdgeIterator<'a, W>
+pub struct DiskReverseEdgeIterator<'a, K, W>
 where
-    W: Clone + std::cmp::PartialEq + FromDiskBytes,
+    W: Clone + std::cmp::PartialEq + FromDiskBytes + AsDiskBytes,
+    K: Clone + Eq + Hash + FromDiskBytes + AsDiskBytes,
 {
-    mmap_ref: &'a DiskStorage<W>,
+    mmap_ref: &'a DiskStorage<K, W>,
     current_offset: u64,
     edges_left: u64,
 }
 
-impl<'a, W> DiskReverseEdgeIterator<'a, W>
+impl<'a, K, W> DiskReverseEdgeIterator<'a, K, W>
 where
-    W: Clone + std::cmp::PartialEq + FromDiskBytes,
+    W: Clone + std::cmp::PartialEq + FromDiskBytes + AsDiskBytes,
+    K: Clone + Eq + Hash + FromDiskBytes + AsDiskBytes,
 {
     /// Creates a new `DiskReverseEdgeIterator` starting at the given offset.
     ///
@@ -105,13 +114,15 @@ where
     ///
     /// # Errors
     /// This method does not return an error.
-    pub fn new(mmap_ref: &'a DiskStorage<W>, offset: &u64, number_of_edges: &u64) -> DiskReverseEdgeIterator<'a, W>{
+    pub fn new(mmap_ref: &'a DiskStorage<K, W>, offset: &u64, number_of_edges: &u64) -> DiskReverseEdgeIterator<'a, K, W>{
         DiskReverseEdgeIterator{mmap_ref, current_offset: *offset, edges_left: *number_of_edges}
     }
 }
-impl<'a, W> Iterator for DiskReverseEdgeIterator<'a, W>
+impl<'a, K, W> Iterator for DiskReverseEdgeIterator<'a, K, W>
 where
-    W: Clone + PartialEq + FromDiskBytes{
+    W: Clone + PartialEq + FromDiskBytes + AsDiskBytes,
+    K: Clone + Eq + Hash + FromDiskBytes + AsDiskBytes,
+{
     type Item=u64;
 
     /// Advances the iterator and returns the next reverse edge node ID.

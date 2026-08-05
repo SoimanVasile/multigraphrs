@@ -1,3 +1,7 @@
+use std::hash::Hash;
+
+use crate::storage::disk_storage::from_disk_bytes::FromDiskBytes;
+use crate::storage::disk_storage::from_disk_bytes::AsDiskBytes;
 use crate::core::edge::Edge;
 use crate::core::graph_errors::GraphError;
 
@@ -5,12 +9,13 @@ use crate::core::graph_errors::GraphError;
 /// disk-backed implementations.
 ///
 /// All methods operate on internal numeric node IDs (`&u64`).
-pub trait StorageBackend<W>
+pub trait StorageBackend<K, W>
 where
-    W: Clone + std::cmp::PartialEq,
+    W: Clone + std::cmp::PartialEq + AsDiskBytes + FromDiskBytes,
+    K: Clone + Eq + Hash + AsDiskBytes + FromDiskBytes,
 {
     /// Associated iterator type returned by [`get_edges`](Self::get_edges).
-    type EdgeIter<'a>: Iterator<Item=Edge<W>> where Self: 'a, W: 'a;
+    type EdgeIter<'a>: Iterator<Item=Edge<W>> where Self: 'a, W: 'a, K: 'a;
 
     /// Appends a **clone** of `edge` to the adjacency list of `node`.
     /// Increments the internal edge counter.
@@ -56,7 +61,7 @@ where
     /// # Panics
     /// Panics if `node` is out of bounds.
     ///
-    fn get_edges<'a>(&'a self, node: &u64) -> Self::EdgeIter<'a> where W: 'a;
+    fn get_edges<'a>(&'a self, node: &u64) -> Self::EdgeIter<'a> where W: 'a, K: 'a;
 
     /// Removes the first edge from `source` which the target and weight match
     ///
@@ -204,4 +209,12 @@ where
     /// # Side Effects
     /// Frees the `node_id` internally and decrements the total node count.
     fn free_node_id(&mut self, node_id: &u64) -> Result<(), GraphError>;
+
+    fn hashed_nodes_contains_key(&self, key: &K) -> Result<bool, GraphError>;
+
+    fn hashed_nodes_insert(&mut self, key: K, node_id: u64) -> Result<(), GraphError>;
+
+    fn hashed_nodes_get(&self,  key: &K) -> Result<Option<u64>, GraphError>;
+
+    fn hashed_nodes_remove(&mut self, key: &K) -> Result<Option<u64>, GraphError>;
 }

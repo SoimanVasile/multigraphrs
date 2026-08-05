@@ -1,3 +1,5 @@
+use crate::storage::disk_storage::from_disk_bytes::FromDiskBytes;
+use crate::storage::disk_storage::from_disk_bytes::AsDiskBytes;
 
 /// Represents a single connection between nodes in the graph.
 ///
@@ -7,7 +9,7 @@
 #[repr(C)]
 pub struct Edge<W>
 where
-    W: Clone + std::cmp::PartialEq,
+    W: Clone + std::cmp::PartialEq + AsDiskBytes + FromDiskBytes,
 {
     /// The destination node this edge points to.
     pub target: u64,
@@ -17,7 +19,7 @@ where
 
 impl<W> Edge<W>
 where
-    W: Clone + std::cmp::PartialEq,
+    W: Clone + std::cmp::PartialEq + AsDiskBytes + FromDiskBytes,
 {
     /// Constructs a new `Edge`.
     ///
@@ -74,8 +76,8 @@ where
 #[derive(Clone, Debug, PartialEq)]
 pub struct EdgeView<K, W>
 where
-    K: Clone + Eq,
-    W: Clone + std::cmp::PartialEq
+    K: Clone + Eq + AsDiskBytes + FromDiskBytes,
+    W: Clone + std::cmp::PartialEq + AsDiskBytes + FromDiskBytes
 {
     target: K,
     weight: W,
@@ -83,8 +85,8 @@ where
 
 impl<K, W> EdgeView<K, W>
 where
-    W: Clone + std::cmp::PartialEq,
-    K: Eq + Clone
+    W: Clone + std::cmp::PartialEq + AsDiskBytes + FromDiskBytes,
+    K: Eq + Clone + AsDiskBytes + FromDiskBytes
 {
     /// Constructs a new `EdgeView` by **cloning** the provided target and weight.
     ///

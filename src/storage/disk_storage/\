@@ -249,7 +249,7 @@ where
     /// * Any of the required `.bin` files cannot be opened or created.
     /// * The filesystem fails to report file metadata or set the initial file length.
     /// * Memory mapping the files fails (e.g., out of virtual address space).
-    pub fn new<P: AsRef<Path>>(directory: P) -> DiskStorage<K, W>
+    pub fn new<P: AsRef<Path>>(directory: P) -> DiskStorage<W>
     {
         let dir = directory.as_ref();
 
@@ -298,7 +298,6 @@ where
 
         let node_count = super_block.node_count;
         let edge_count = super_block.edge_count;
-        let dictionary = DiskDictionary::new::<K, &Path>(dir, &wal_manager);
 
         DiskStorage {
             file_manager_node: file_node,
@@ -310,7 +309,6 @@ where
             wal_manager,
             directory: dir.to_path_buf(),
             is_poisoned: AtomicBool::new(false),
-            hashed_nodes: dictionary,
             _marker: PhantomData::<W>
         }
     }
@@ -791,12 +789,12 @@ where
     }
 }
 
-impl<K, W> StorageBackend<K, W> for DiskStorage<K, W>
+impl<K, W> StorageBackend<K, W> for DiskStorage<W>
 where
     K: Clone + Eq + Hash + FromDiskBytes + AsDiskBytes,
     W: Clone + PartialEq + FromDiskBytes + AsDiskBytes,
 {
-    type EdgeIter<'a> = DiskEdgeIterator<'a, K, W> where Self: 'a, W: 'a;
+    type EdgeIter<'a> = DiskEdgeIterator<'a, W> where Self: 'a, W: 'a;
     /// Adds a new node to the storage.
     ///
     /// # Side Effects
@@ -904,8 +902,7 @@ where
         
         self.write_superblock(&superblock, Some(&mut tx));
 
-        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
-        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
         Ok(())
     }
 
@@ -1437,7 +1434,7 @@ where
         todo!()
     }
 
-    fn hashed_nodes_get(&self,  key: &K) -> Result<Option<u64>, GraphError> {
+    fn hashed_nodes_get(&self,  key: &K) -> Result<Option<&u64>, GraphError> {
         todo!()
     }
 

@@ -1,3 +1,5 @@
+use crate::storage::disk_storage::from_disk_bytes::FromDiskBytes;
+use crate::storage::disk_storage::from_disk_bytes::AsDiskBytes;
 use std::hash::Hash;
 
 use crate::strategies::direction_strategy::DirectionStrategy;
@@ -7,10 +9,10 @@ use crate::storage::storage_backend::StorageBackend;
 
 pub struct NodeIter<'a, K, W, S, B>
 where
-    K: Clone + Eq + Hash,
-    W: Clone + PartialEq,
-    S: DirectionStrategy<W>,
-    B: StorageBackend<W>
+    K: Clone + Eq + Hash + AsDiskBytes + FromDiskBytes,
+    W: Clone + PartialEq + AsDiskBytes + FromDiskBytes,
+    S: DirectionStrategy<K, W>,
+    B: StorageBackend<K, W>
 {
     pub(crate) graph: &'a MultiGraph<K, W, S, B>,
     pub(crate) index: u64
@@ -18,10 +20,10 @@ where
 
 impl<'a, K, W, S, B> Iterator for NodeIter<'a, K, W, S, B>
 where
-    K: Clone + Eq + Hash,
-    W: Clone + PartialEq,
-    S: DirectionStrategy<W>,
-    B: StorageBackend<W>
+    K: Clone + Eq + Hash + AsDiskBytes + FromDiskBytes,
+    W: Clone + PartialEq + AsDiskBytes + FromDiskBytes,
+    S: DirectionStrategy<K, W>,
+    B: StorageBackend<K, W>
 {
     type Item = (&'a K, Vec<EdgeView<K, W>>);
     

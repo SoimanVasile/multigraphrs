@@ -30,6 +30,8 @@ pub use strategies::weighted_directed::WeightedDirected;
 pub use core::graph_errors::GraphError;
 pub use core::multigraph_iterator::{self, NodeIter};
 pub use core::edge::EdgeView;
+use crate::storage::disk_storage::from_disk_bytes::FromDiskBytes;
+use crate::storage::disk_storage::from_disk_bytes::AsDiskBytes;
 use core::edge::Edge;
 
 pub use storage::disk_storage::disk_multigraph::DiskStorage;
@@ -37,10 +39,7 @@ use storage::adjacency_list::RamStorage;
 use storage::storage_backend::StorageBackend;
 
 use std::{hash::Hash, marker::PhantomData};
-use ahash::{AHashMap, AHashSet};
-
-use dictionary::dictionary_strategy::DictionaryStrategy;
-use dictionary::ram_dictionary::RamDictionary;
+use ahash::{AHashSet};
 
 const MAX_CAPACITY_BULK: usize = 131_072; // The max size of a buffer for a bulk operation
 
@@ -55,12 +54,11 @@ const MAX_CAPACITY_BULK: usize = 131_072; // The max size of a buffer for a bulk
 /// * `W`: The type of the edge weights. Must implement `Clone` (allowing floating-point weights).
 /// * `S`: The direction strategy (e.g., `Directed`, `Weighted`).
 /// * `B`: The storage backend determining how data is stored.
-pub struct MultiGraph<K, W, S: DirectionStrategy<W>, B: StorageBackend<W> = RamStorage<W>, D: DictionaryStrategy<K> = RamDictionary<K> >
+pub struct MultiGraph<K, W, S: DirectionStrategy<K, W>, B: StorageBackend<K, W>>
 where
-    K: Eq + Hash + Clone,
-    W: Clone + std::cmp::PartialEq,
+    K: Eq + Hash + Clone + AsDiskBytes + FromDiskBytes,
+    W: Clone + std::cmp::PartialEq + AsDiskBytes + FromDiskBytes,
 {
-    hashed_nodes: D,
     pub(crate) reversed_hashed_nodes: Vec<Option<K>>,
     /// The internal adjacency list mapping a node to its outgoing edges.
     pub(crate) adjacency_list: B,
@@ -69,17 +67,17 @@ where
     _marker: PhantomData<(S, W)>,
 }
 
-pub type RamMultiGraph<K, W, Dir> = MultiGraph<K, W, Dir, RamStorage<W>>;
-pub type DiskMultiGraph<K, W, Dir> = MultiGraph<K, W, Dir, DiskStorage<W>>;
+pub type RamMultiGraph<K, W, Dir> = MultiGraph<K, W, Dir, RamStorage<K, W>>;
+pub type DiskMultiGraph<K, W, Dir> = MultiGraph<K, W, Dir, DiskStorage<K, W>>;
 
 // --- Core Methods Shared by ALL Graph Types ---
 
 impl<K, W, S, B> MultiGraph<K, W, S, B>
 where
-    K: Eq + Hash + Clone,
-    W: Clone + std::cmp::PartialEq,
-    S: DirectionStrategy<W>,
-    B: StorageBackend<W>,
+    K: Eq + Hash + Clone + AsDiskBytes + FromDiskBytes,
+    W: Clone + std::cmp::PartialEq + AsDiskBytes + FromDiskBytes,
+    S: DirectionStrategy<K, W>,
+    B: StorageBackend<K, W>,
 {
     /// Creates a new `MultiGraph` using the given storage backend.
     ///
@@ -94,7 +92,6 @@ where
             adjacency_list: backend,
             node_count,
             _marker: PhantomData,
-            hashed_nodes: RamDictionary::new(),
             reversed_hashed_nodes: Vec::new(),
         }
     }
@@ -114,7 +111,6 @@ where
             adjacency_list: backend,
             node_count,
             _marker: PhantomData,
-            hashed_nodes: RamDictionary::with_capacity(number_of_preallocated_nodes),
             reversed_hashed_nodes: Vec::with_capacity(number_of_preallocated_nodes),
         }
     }
@@ -128,13 +124,13 @@ where
     ///
     /// Returns `GraphError::NodeAlreadyExists` if the node is already present in the graph.
     pub fn add_node(&mut self, source: K) -> Result<K, GraphError> {
-        if self.hashed_nodes.contains_key(&source) {
+        if self.adjacency_list.hashed_nodes_contains_key(&source)? {
             return Err(GraphError::NodeAlreadyExists);
         }
         let node_id = self.adjacency_list.add_node()?;
         self.node_count += 1;
         
-        self.hashed_nodes.insert(source.clone(), node_id);
+        self.adjacency_list.hashed_nodes_insert(source.clone(), node_id);
         if node_id >= self.reversed_hashed_nodes.len() as u64 {
             self.reversed_hashed_nodes.resize(node_id as usize + 1, None);
         }
@@ -149,7 +145,6 @@ where
         }
         let adjacency_list = &mut self.adjacency_list;
         let reversed_hashed_nodes = &mut self.reversed_hashed_nodes;
-        let hashed_nodes = &mut self.hashed_nodes;
         let nodes_id = adjacency_list.bulk_add_node(&(nodes.len() as u64))?;
 
         let max = nodes_id.iter().max().unwrap();
@@ -162,7 +157,7 @@ where
 
         for (index, node) in nodes.iter().enumerate(){
             let id = nodes_id[index];
-            hashed_nodes.insert(node.clone(), id);
+            self.adjacency_list.hashed_nodes_insert(node.clone(), id);
             reversed_hashed_nodes[id as usize] = Some(node.clone());
         }
         nodes.clear();
@@ -183,7 +178,7 @@ where
 
 
         for source in sources{
-            if self.hashed_nodes.contains_key(source) || !seen_in_batch.insert(source.clone()) {
+            if self.adjacency_list.hashed_nodes_contains_key(source)? || !seen_in_batch.insert(source.clone()) {
                 continue
             }
 
@@ -219,7 +214,7 @@ where
     /// Panics (via `unwrap`) if the internal reverse-lookup vector is out of
     /// sync with the hash map — this indicates a bug in the library itself.
     pub fn remove_node(&mut self, source: &K) -> Result<K, GraphError> {
-        let index = match self.hashed_nodes.remove(source) {
+        let index = match self.adjacency_list.hashed_nodes_remove(source)? {
             Some(idx) => idx,
             None => return Err(GraphError::NodeNotFound),
         };
@@ -240,8 +235,8 @@ where
     /// Returns `GraphError::NodeNotFound` if the node is not in the graph.
     ///
     pub fn degree(&self, source: &K) -> Result<usize, GraphError>{
-        match self.hashed_nodes.get(source){
-            Some(n) => Ok(self.adjacency_list.node_len(n)),
+        match self.adjacency_list.hashed_nodes_get(source)?{
+            Some(n) => Ok(self.adjacency_list.node_len(&n)),
             None => Err(GraphError::NodeNotFound),
         }
     }
@@ -259,11 +254,11 @@ where
     /// Panics (via `unwrap`) if any edge targets a node whose reverse-lookup
     /// entry is `None` — this indicates an internal inconsistency.
     pub fn get_neighbours(&self, source: &K) -> Result<Vec<EdgeView<K, W>>, GraphError>{
-        let source_hashed = match self.hashed_nodes.get(source){
+        let source_hashed = match self.adjacency_list.hashed_nodes_get(source)?{
             Some(t) => t,
             None => return Err(GraphError::NodeNotFound),
         };
-        let neighbours = self.adjacency_list.get_edges(source_hashed);
+        let neighbours = self.adjacency_list.get_edges(&source_hashed);
         Ok(neighbours
             .map(|edge| EdgeView::new(self.reversed_hashed_nodes[edge.get_target() as usize].as_ref().unwrap(), &edge.get_weight()))
             .collect())
@@ -273,8 +268,8 @@ where
     ///
     /// # Returns
     /// A **copy** (`bool` is `Copy`). No data from the graph is moved or cloned.
-    pub fn contains_node(&self, key: &K) -> bool{
-        self.hashed_nodes.contains_key(key)
+    pub fn contains_node(&self, key: &K) -> Result<bool, GraphError>{
+        self.adjacency_list.hashed_nodes_contains_key(key)
     }
 
     /// Returns the total number of nodes currently in the graph.
@@ -317,42 +312,42 @@ where
     ///
     /// # Returns
     /// A **copy** (`bool` is `Copy`).
-    pub fn contains_edge(&self, source: &K, target: &K) -> bool{
+    pub fn contains_edge(&self, source: &K, target: &K) -> Result<bool, GraphError>{
 
-        let source_hashed = match self.hashed_nodes.get(source){
+        let source_hashed = match self.adjacency_list.hashed_nodes_get(source)?{
             Some(t) => t,
-            None => return false,
+            None => return Ok(false),
         };
 
-        let target_hashed = match self.hashed_nodes.get(target){
+        let target_hashed = match self.adjacency_list.hashed_nodes_get(target)?{
             Some(t) => t,
-            None => return false,
+            None => return Ok(false),
         };
 
-        self.adjacency_list.contains_edge(source_hashed, target_hashed).is_ok()
+        Ok(self.adjacency_list.contains_edge(&source_hashed, &target_hashed).is_ok())
     }
 }
 
 // --- Strategy-Specific Implementations ---
 
-impl<K, W> MultiGraph<K, W, Weighted, RamStorage<W>>
+impl<K, W> MultiGraph<K, W, Weighted, RamStorage<K, W>>
 where
-    K: Eq + Hash + Clone,
-    W: Clone + std::cmp::PartialEq,
+    K: Eq + Hash + Clone + AsDiskBytes + FromDiskBytes,
+    W: Clone + std::cmp::PartialEq + AsDiskBytes + FromDiskBytes,
 {
     /// Creates a new, empty `Weighted` (undirected) graph.
     ///
     /// # Returns
     /// A Directed Multigraph saved on the RAM
-    pub fn new() -> MultiGraph<K, W, Weighted, RamStorage<W>> {
+    pub fn new() -> MultiGraph<K, W, Weighted, RamStorage<K, W>> {
         Self::with_backend(RamStorage::new())
     }
 }
 
-impl<K, W> Default for MultiGraph<K, W, Weighted, RamStorage<W>>
+impl<K, W> Default for MultiGraph<K, W, Weighted, RamStorage<K, W>>
 where
-    K: Eq + Hash + Clone,
-    W: Clone + std::cmp::PartialEq
+    K: Eq + Hash + Clone + AsDiskBytes + FromDiskBytes,
+    W: Clone + std::cmp::PartialEq + AsDiskBytes + FromDiskBytes
 {
     fn default() -> Self {
         Self::new()
@@ -361,9 +356,9 @@ where
 
 impl<K, W, B> MultiGraph<K, W, Weighted, B>
 where
-    K: Eq + Hash + Clone,
-    W: Clone + std::cmp::PartialEq,
-    B: StorageBackend<W>,
+    K: Eq + Hash + Clone + AsDiskBytes + FromDiskBytes,
+    W: Clone + std::cmp::PartialEq + AsDiskBytes + FromDiskBytes,
+    B: StorageBackend<K, W>,
 {
 
     /// Adds a weighted edge between two nodes in both directions.
@@ -375,16 +370,16 @@ where
     /// Returns `GraphError::NodeNotFound` if either the `source` or `target` node 
     /// does not exist in the graph prior to adding the edge.
     pub fn add_edge(&mut self, source: K, target: K, weight: W) -> Result<EdgeView<K, W>, GraphError> {
-        let source_hashed = match self.hashed_nodes.get(&source){
+        let source_hashed = match self.adjacency_list.hashed_nodes_get(&source)?{
             Some(t) => t,
             None => return Err(GraphError::NodeNotFound),
         };
 
-        let target_hashed = match self.hashed_nodes.get(&target){
+        let target_hashed = match self.adjacency_list.hashed_nodes_get(&target)?{
             Some(t) => t,
             None => return Err(GraphError::NodeNotFound),
         };
-        let edge = Weighted::add_edge(&mut self.adjacency_list, *source_hashed, *target_hashed, &weight)?;
+        let edge = Weighted::add_edge(&mut self.adjacency_list, source_hashed, target_hashed, &weight)?;
         Ok(EdgeView::new(self.reversed_hashed_nodes[edge.get_target() as usize].as_ref().unwrap(), &edge.get_weight()))
 
     }
@@ -407,17 +402,17 @@ where
                 hashed_edges.clear();
             }
 
-            let source_hashed = match self.hashed_nodes.get(source){
+            let source_hashed = match self.adjacency_list.hashed_nodes_get(source)?{
                 Some(t) => t,
                 None => continue
             };
 
-            let target_hashed = match self.hashed_nodes.get(target){
+            let target_hashed = match self.adjacency_list.hashed_nodes_get(target)?{
                 Some(t) => t,
                 None => continue
             };
 
-            hashed_edges.push((*source_hashed, *target_hashed, weight.clone()));
+            hashed_edges.push((source_hashed, target_hashed, weight.clone()));
         }
 
         if !hashed_edges.is_empty(){
@@ -436,17 +431,17 @@ where
                 hashed_edges.clear();
             }
 
-            let source_hashed = match self.hashed_nodes.get(source){
+            let source_hashed = match self.adjacency_list.hashed_nodes_get(source)?{
                 Some(t) => t,
                 None => continue,
             };
 
-            let target_hashed = match self.hashed_nodes.get(target){
+            let target_hashed = match self.adjacency_list.hashed_nodes_get(target)?{
                 Some(t) => t,
                 None => continue,
             };
 
-            hashed_edges.push((*source_hashed, *target_hashed, weight.clone()));
+            hashed_edges.push((source_hashed, target_hashed, weight.clone()));
         }
 
         if !hashed_edges.is_empty(){
@@ -471,38 +466,38 @@ where
     /// # Panics
     /// Panics (via `unwrap`) if the reverse-lookup entry for the edge target is `None`.
     pub fn remove_edge(&mut self, source: K, target: K, weight: W) -> Result<EdgeView<K, W>, GraphError>{
-        let source_hashed = match self.hashed_nodes.get(&source){
+        let source_hashed = match self.adjacency_list.hashed_nodes_get(&source)?{
             Some(t) => t,
             None => return Err(GraphError::NodeNotFound),
         };
 
-        let target_hashed = match self.hashed_nodes.get(&target){
+        let target_hashed = match self.adjacency_list.hashed_nodes_get(&target)?{
             Some(t) => t,
             None => return Err(GraphError::NodeNotFound),
         };
-        let edge = Weighted::remove_edge(&mut self.adjacency_list, *source_hashed, *target_hashed, &weight)?;
+        let edge = Weighted::remove_edge(&mut self.adjacency_list, source_hashed, target_hashed, &weight)?;
 
         Ok(EdgeView::new(self.reversed_hashed_nodes[edge.get_target() as usize].as_ref().unwrap(), &edge.get_weight()))
     }
 }
 
 
-impl<K, W> MultiGraph<K, W, WeightedDirected, RamStorage<W>>
+impl<K, W> MultiGraph<K, W, WeightedDirected, RamStorage<K, W>>
 where
-    K: Eq + Hash + Clone,
-    W: Clone + std::cmp::PartialEq,
+    K: Eq + Hash + Clone + AsDiskBytes + FromDiskBytes,
+    W: Clone + std::cmp::PartialEq + AsDiskBytes + FromDiskBytes,
 {
     /// Creates a new, empty `WeightedDirected` graph.
-    pub fn new() -> MultiGraph<K, W, WeightedDirected, RamStorage<W>> {
+    pub fn new() -> MultiGraph<K, W, WeightedDirected, RamStorage<K, W>> {
         Self::with_backend(RamStorage::new())
     }
 }
 
 impl<K, W, B> MultiGraph<K, W, WeightedDirected, B>
 where
-    K: Eq + Hash + Clone,
-    W: Clone + std::cmp::PartialEq,
-    B: StorageBackend<W>,
+    K: Eq + Hash + Clone + AsDiskBytes + FromDiskBytes,
+    W: Clone + std::cmp::PartialEq + AsDiskBytes + FromDiskBytes,
+    B: StorageBackend<K, W>,
 {
 
     /// Adds a directed edge from `source` to `target` with the given `weight`.
@@ -516,16 +511,16 @@ where
     /// # Errors
     /// Returns `GraphError::NodeNotFound` if either node does not exist.
     pub fn add_edge(&mut self, source: K, target: K, weight: W) -> Result<EdgeView<K, W>, GraphError> {
-        let source_hashed = match self.hashed_nodes.get(&source){
+        let source_hashed = match self.adjacency_list.hashed_nodes_get(&source)?{
             Some(t) => t,
             None => return Err(GraphError::NodeNotFound),
         };
 
-        let target_hashed = match self.hashed_nodes.get(&target){
+        let target_hashed = match self.adjacency_list.hashed_nodes_get(&target)?{
             Some(t) => t,
             None => return Err(GraphError::NodeNotFound),
         };
-        let edge = WeightedDirected::add_edge(&mut self.adjacency_list, *source_hashed, *target_hashed, &weight)?;
+        let edge = WeightedDirected::add_edge(&mut self.adjacency_list, source_hashed, target_hashed, &weight)?;
 
         Ok(EdgeView::new(self.reversed_hashed_nodes[edge.get_target() as usize].as_ref().unwrap(), &edge.get_weight()))
     }
@@ -539,17 +534,17 @@ where
                 hashed_edges.clear();
             }
 
-            let source_hashed = match self.hashed_nodes.get(source){
+            let source_hashed = match self.adjacency_list.hashed_nodes_get(source)?{
                 Some(t) => t,
                 None => continue
             };
 
-            let target_hashed = match self.hashed_nodes.get(target){
+            let target_hashed = match self.adjacency_list.hashed_nodes_get(target)?{
                 Some(t) => t,
                 None => continue
             };
 
-            hashed_edges.push((*source_hashed, *target_hashed, weight.clone()));
+            hashed_edges.push((source_hashed, target_hashed, weight.clone()));
         }
 
         if !hashed_edges.is_empty(){
@@ -578,24 +573,24 @@ where
     /// # Panics
     /// Panics (via `unwrap`) if the reverse-lookup entry for the edge target is `None`.
     pub fn remove_edge(&mut self, source: K, target: K, weight: W) -> Result<EdgeView<K, W>, GraphError>{
-        let source_hashed = match self.hashed_nodes.get(&source){
+        let source_hashed = match self.adjacency_list.hashed_nodes_get(&source)?{
             Some(t) => t,
             None => return Err(GraphError::NodeNotFound),
         };
 
-        let target_hashed = match self.hashed_nodes.get(&target){
+        let target_hashed = match self.adjacency_list.hashed_nodes_get(&target)?{
             Some(t) => t,
             None => return Err(GraphError::NodeNotFound),
         };
-        let edge = WeightedDirected::remove_edge(&mut self.adjacency_list, *source_hashed, *target_hashed, &weight)?;
+        let edge = WeightedDirected::remove_edge(&mut self.adjacency_list, source_hashed, target_hashed, &weight)?;
 
         Ok(EdgeView::new(self.reversed_hashed_nodes[edge.get_target() as usize].as_ref().unwrap(), &edge.get_weight()))
     }
 }
 
-impl<K> MultiGraph<K, u32, Directed, RamStorage<u32>>
+impl<K> MultiGraph<K, u32, Directed, RamStorage<K, u32>>
 where
-    K: Eq + Hash + Clone,
+    K: Eq + Hash + Clone + AsDiskBytes + FromDiskBytes,
 {
     /// Creates a new, empty, unweighted `Directed` graph.
     ///
@@ -604,15 +599,15 @@ where
     ///
     /// # Errors
     /// This function does not return an error.
-    pub fn new() -> MultiGraph<K, u32, Directed, RamStorage<u32>> {
+    pub fn new() -> MultiGraph<K, u32, Directed, RamStorage<K, u32>> {
         Self::with_backend(RamStorage::new())
     }
 }
 
 impl<K, B> MultiGraph<K, u32, Directed, B>
 where
-    K: Eq + Hash + Clone,
-    B: StorageBackend<u32>,
+    K: Eq + Hash + Clone + AsDiskBytes + FromDiskBytes,
+    B: StorageBackend<K, u32>,
 {
 
     /// Adds a directed edge from `source` to `target` with a default weight of 1.
@@ -627,16 +622,16 @@ where
     /// Returns `GraphError::NodeNotFound` if either node does not exist.
     pub fn add_edge(&mut self, source: K, target: K) -> Result<EdgeView<K, u32>, GraphError> {
  
-        let source_hashed = match self.hashed_nodes.get(&source){
+        let source_hashed = match self.adjacency_list.hashed_nodes_get(&source)?{
             Some(t) => t,
             None => return Err(GraphError::NodeNotFound),
         };
 
-        let target_hashed = match self.hashed_nodes.get(&target){
+        let target_hashed = match self.adjacency_list.hashed_nodes_get(&target)?{
             Some(t) => t,
             None => return Err(GraphError::NodeNotFound),
         };
-        let edge = Directed::add_edge(&mut self.adjacency_list, *source_hashed, *target_hashed, &1)?;
+        let edge = Directed::add_edge(&mut self.adjacency_list, source_hashed, target_hashed, &1)?;
         
         Ok(EdgeView::new(self.reversed_hashed_nodes[edge.get_target() as usize].as_ref().unwrap(), &edge.get_weight()))
     }
@@ -658,17 +653,17 @@ where
                 hashed_edges.clear();
             }
             
-            let source_hashed = match self.hashed_nodes.get(source){
+            let source_hashed = match self.adjacency_list.hashed_nodes_get(source)?{
                 Some(t) => t,
                 None => continue,
             };
 
-            let target_hashed = match self.hashed_nodes.get(target){
+            let target_hashed = match self.adjacency_list.hashed_nodes_get(target)?{
                 Some(t) => t,
                 None => continue,
             };
 
-            hashed_edges.push((*source_hashed, *target_hashed, 1u32));
+            hashed_edges.push((source_hashed, target_hashed, 1u32));
         }
 
         if !hashed_edges.is_empty(){
@@ -691,16 +686,16 @@ where
     /// # Panics
     /// Panics (via `unwrap`) if the reverse-lookup entry for the edge target is `None`.
     pub fn remove_edge(&mut self, source: K, target: K) -> Result<EdgeView<K, u32>, GraphError>{
-        let source_hashed = match self.hashed_nodes.get(&source){
+        let source_hashed = match self.adjacency_list.hashed_nodes_get(&source)?{
             Some(t) => t,
             None => return Err(GraphError::NodeNotFound),
         };
 
-        let target_hashed = match self.hashed_nodes.get(&target){
+        let target_hashed = match self.adjacency_list.hashed_nodes_get(&target)?{
             Some(t) => t,
             None => return Err(GraphError::NodeNotFound),
         };
-        let edge = Directed::remove_edge(&mut self.adjacency_list, *source_hashed, *target_hashed, &1)?;
+        let edge = Directed::remove_edge(&mut self.adjacency_list, source_hashed, target_hashed, &1)?;
 
         Ok(EdgeView::new(self.reversed_hashed_nodes[edge.get_target() as usize].as_ref().unwrap(), &edge.get_weight()))
     }
@@ -714,17 +709,17 @@ where
                 hashed_edges.clear();
             }
 
-            let source_hashed = match self.hashed_nodes.get(source){
+            let source_hashed = match self.adjacency_list.hashed_nodes_get(source)?{
                 Some(t) => t,
                 None => continue,
             };
 
-            let target_hashed = match self.hashed_nodes.get(target){
+            let target_hashed = match self.adjacency_list.hashed_nodes_get(target)?{
                 Some(t) => t,
                 None => continue,
             };
 
-            hashed_edges.push((*source_hashed, *target_hashed, 1));
+            hashed_edges.push((source_hashed, target_hashed, 1));
         }
 
         if !hashed_edges.is_empty(){
@@ -735,23 +730,23 @@ where
     }
 }
 
-impl<K> MultiGraph<K, u32, Undirected, RamStorage<u32>>
+impl<K> MultiGraph<K, u32, Undirected, RamStorage<K, u32>>
 where
-    K: Eq + Hash + Clone,
+    K: Eq + Hash + Clone + AsDiskBytes + FromDiskBytes,
 {
     /// Creates a new, empty, unweighted `Undirected` graph.
     ///
     /// # Errors
     /// This function does not return an error.
-    pub fn new() -> MultiGraph<K, u32, Undirected, RamStorage<u32>> {
+    pub fn new() -> MultiGraph<K, u32, Undirected, RamStorage<K, u32>> {
         Self::with_backend(RamStorage::new())
     }
 }
 
 impl<K, B> MultiGraph<K, u32, Undirected, B>
 where
-    K: Eq + Hash + Clone,
-    B: StorageBackend<u32>,
+    K: Eq + Hash + Clone + AsDiskBytes + FromDiskBytes,
+    B: StorageBackend<K, u32>,
 {
 
     /// Adds an undirected connection (edges in both directions) between `source` and `target`, defaulting weight to 1.
@@ -763,16 +758,16 @@ where
     /// Returns [`GraphError::NodeNotFound`] if either node does not exist.
     pub fn add_edge(&mut self, source: K, target: K) -> Result<EdgeView<K, u32>, GraphError> {
  
-        let source_hashed = match self.hashed_nodes.get(&source){
+        let source_hashed = match self.adjacency_list.hashed_nodes_get(&source)?{
             Some(t) => t,
             None => return Err(GraphError::NodeNotFound),
         };
 
-        let target_hashed = match self.hashed_nodes.get(&target){
+        let target_hashed = match self.adjacency_list.hashed_nodes_get(&target)?{
             Some(t) => t,
             None => return Err(GraphError::NodeNotFound),
         };
-        let edge = Undirected::add_edge(&mut self.adjacency_list, *source_hashed, *target_hashed, &1)?;
+        let edge = Undirected::add_edge(&mut self.adjacency_list, source_hashed, target_hashed, &1)?;
 
         Ok(EdgeView::new(self.reversed_hashed_nodes[edge.get_target() as usize].as_ref().unwrap(), &edge.get_weight()))
     }
@@ -791,17 +786,17 @@ where
                 hashed_nodes.clear();
             }
 
-            let source_hashed = match self.hashed_nodes.get(source){
+            let source_hashed = match self.adjacency_list.hashed_nodes_get(source)?{
                 Some(t) => t,
                 None => continue
             };
 
-            let target_hashed = match self.hashed_nodes.get(target){
+            let target_hashed = match self.adjacency_list.hashed_nodes_get(target)?{
                 Some(t) => t,
                 None => continue,
             };
 
-            hashed_nodes.push((*source_hashed, *target_hashed, 1));
+            hashed_nodes.push((source_hashed, target_hashed, 1));
         }
 
         if !hashed_nodes.is_empty(){
@@ -820,17 +815,17 @@ where
                 hashed_edges.clear();
             }
 
-            let source_hashed = match self.hashed_nodes.get(source){
+            let source_hashed = match self.adjacency_list.hashed_nodes_get(source)?{
                 Some(t) => t,
                 None => continue,
             };
 
-            let target_hashed = match self.hashed_nodes.get(target){
+            let target_hashed = match self.adjacency_list.hashed_nodes_get(target)?{
                 Some(t) => t,
                 None => continue,
             };
 
-            hashed_edges.push((*source_hashed, *target_hashed, 1));
+            hashed_edges.push((source_hashed, target_hashed, 1));
         }
 
         if !hashed_edges.is_empty(){
@@ -854,16 +849,16 @@ where
     /// # Panics
     /// Panics (via `unwrap`) if the reverse-lookup entry for the edge target is `None`.
     pub fn remove_edge(&mut self, source: K, target: K) -> Result<EdgeView<K, u32>, GraphError>{
-        let source_hashed = match self.hashed_nodes.get(&source){
+        let source_hashed = match self.adjacency_list.hashed_nodes_get(&source)?{
             Some(t) => t,
             None => return Err(GraphError::NodeNotFound),
         };
 
-        let target_hashed = match self.hashed_nodes.get(&target){
+        let target_hashed = match self.adjacency_list.hashed_nodes_get(&target)?{
             Some(t) => t,
             None => return Err(GraphError::NodeNotFound),
         };
-        let edge = Undirected::remove_edge(&mut self.adjacency_list, *source_hashed, *target_hashed, &1)?;
+        let edge = Undirected::remove_edge(&mut self.adjacency_list, source_hashed, target_hashed, &1)?;
 
         Ok(EdgeView::new(self.reversed_hashed_nodes[edge.get_target() as usize].as_ref().unwrap(), &edge.get_weight()))
     }

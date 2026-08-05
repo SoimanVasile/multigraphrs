@@ -1,3 +1,6 @@
+use std::hash::Hash;
+
+use crate::storage::disk_storage::from_disk_bytes::{AsDiskBytes, FromDiskBytes};
 use crate::storage::storage_backend::StorageBackend;
 use crate::strategies::direction_strategy::DirectionStrategy;
 use crate::core::graph_errors::GraphError;
@@ -12,7 +15,9 @@ use crate::core::edge::Edge;
 /// assign a default weight of `1` (as a `u32`) to every edge created.
 pub struct Directed;
 
-impl DirectionStrategy<u32> for Directed
+impl<K> DirectionStrategy<K, u32> for Directed
+where
+    K: Eq + Hash + Clone + AsDiskBytes + FromDiskBytes
 {
     /// Adds a single directed edge from `source` to `target` with a weight of `1`.
     ///
@@ -23,7 +28,7 @@ impl DirectionStrategy<u32> for Directed
     /// # Side Effects
     /// Mutates the `graph` storage backend by adding the forward edge and updating the reverse index.
     fn add_edge(
-        graph: &mut impl StorageBackend<u32>,
+        graph: &mut impl StorageBackend<K, u32>,
         source: u64, 
         target: u64, 
         weight: &u32
@@ -45,7 +50,7 @@ impl DirectionStrategy<u32> for Directed
     ///
     /// # Side Effects
     /// Mutates the `graph` storage backend to add the given directed edges in bulk.
-    fn bulk_add_edge(graph: &mut impl StorageBackend<u32>, hashed_nodes: &[(u64, u64, u32)]) -> Result<(), GraphError> {
+    fn bulk_add_edge(graph: &mut impl StorageBackend<K, u32>, hashed_nodes: &[(u64, u64, u32)]) -> Result<(), GraphError> {
         let mut edges: Vec<(u64, Edge<u32>)> = Vec::with_capacity(hashed_nodes.len());
         for (source, target, weight) in hashed_nodes{
             let edge = Edge::new(*target, weight);
@@ -57,7 +62,7 @@ impl DirectionStrategy<u32> for Directed
         Ok(())
     }
 
-    fn bulk_remove_edge(graph: &mut impl StorageBackend<u32>, edges: &[(u64, u64, u32)]) -> Result<(), GraphError> {
+    fn bulk_remove_edge(graph: &mut impl StorageBackend<K, u32>, edges: &[(u64, u64, u32)]) -> Result<(), GraphError> {
         let mut edges_to_remove: Vec<(u64, Edge<u32>)> = Vec::with_capacity(edges.len());
         let mut reverse_edges_to_remove: Vec<(u64, u64)> = Vec::with_capacity(edges.len());
         
@@ -88,7 +93,7 @@ impl DirectionStrategy<u32> for Directed
     ///
     /// # Side Effects
     /// Mutates the `graph` storage backend by removing the specified edge and updating the reverse index.
-    fn remove_edge(graph: &mut impl StorageBackend<u32>, source: u64, target: u64, weight: &u32 ) -> Result<Edge<u32>, GraphError> {
+    fn remove_edge(graph: &mut impl StorageBackend<K, u32>, source: u64, target: u64, weight: &u32 ) -> Result<Edge<u32>, GraphError> {
         let edge = Edge::new(target, weight);
         let result = graph.remove_edge(&source, &edge)?;
 
@@ -106,7 +111,7 @@ impl DirectionStrategy<u32> for Directed
     /// # Side Effects
     /// Mutates the `graph` storage backend by clearing reverse and forward edges for the node,
     /// and freeing the `node_id`.
-    fn remove_node(graph: &mut impl StorageBackend<u32>, node_id: u64) -> Result<(), GraphError> {
+    fn remove_node(graph: &mut impl StorageBackend<K, u32>, node_id: u64) -> Result<(), GraphError> {
         // 1. Remove incoming edges: use reverse list to find who points to us
         let incoming = graph.get_reverse_edges(&node_id);
         for source in incoming {

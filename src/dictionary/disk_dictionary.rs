@@ -1,12 +1,13 @@
-use std::{hash::Hash, marker::PhantomData};
+use std::{hash::Hash, marker::PhantomData, path::Path};
 
 use crate::{DirectionStrategy, DiskStorage, dictionary::dictionary_strategy::DictionaryStrategy, storage::disk_storage::{file_manager::FileManager, from_disk_bytes::{FromDiskBytes, AsDiskBytes}, wal::WalManager}};
 
 use crate::dictionary::node_id::NodeId;
 
+#[derive(Debug)]
 pub struct DiskDictionary<K>
 where
-    K: Eq + Hash + Clone + AsDiskBytes
+    K: Eq + Hash + Clone + AsDiskBytes + FromDiskBytes
 {
     file_node_id: FileManager,
     file_data: FileManager,
@@ -16,13 +17,13 @@ where
 
 impl<K> DiskDictionary<K>
 where
-    K: Eq + Clone + Hash + AsDiskBytes
+    K: Eq + Clone + Hash + AsDiskBytes + FromDiskBytes
 {
-    fn new<W>(storage: &DiskStorage<W>) -> Self
+    pub fn new<W, P:AsRef<Path>>(path: P, wal_manager: &WalManager) -> Self
     where
-        W:Clone + PartialEq + FromDiskBytes
+        W: Clone + PartialEq + FromDiskBytes + AsDiskBytes
     {
-        let dir = storage.directory.clone();
+        let dir = path.as_ref();
         
         let node_id_path = dir.join("node_id.bin");
         let node_id_value_path = dir.join("node_id_value.bin");
@@ -33,7 +34,7 @@ where
         let (file_node_value_id, _) = FileManager::new(node_id_value_path)
             .expect("Failed to open the node_id_value");
 
-        let wal_manager = storage.wal_manager.clone();
+        let wal_manager = wal_manager.clone();
 
         Self{
             file_data: file_node_value_id,
@@ -50,7 +51,7 @@ where
 
 impl<K> DictionaryStrategy<K> for DiskDictionary<K>
 where
-    K: Eq + Hash + Clone + AsDiskBytes,
+    K: Eq + Hash + Clone + AsDiskBytes + FromDiskBytes,
 {
     fn contains_key(&self, _key: &K) -> bool {
         todo!()
@@ -70,7 +71,7 @@ where
         self.file_data.writing_bytes_to_mmap(data_offset, data_offset + data_len, &key_bytes);
     }
 
-    fn get(&self, _key: &K) -> Option<&u64> {
+    fn get(&self, _key: &K) -> Option<u64> {
         todo!()
     }
 
