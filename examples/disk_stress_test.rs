@@ -103,7 +103,7 @@ fn run_stress_test(node_count: u32, edges_per_node: u32, test_name: &str) {
     // ─── Phase 1: Add Nodes ───
     let rss_before = get_rss_bytes();
     let start = Instant::now();
-    graph.bulk_add_node(&Vec::from_iter(0..node_count));
+    graph.bulk_add_node(&Vec::from_iter(0..node_count)).unwrap();
     let duration = start.elapsed();
     let rss_after = get_rss_bytes();
     results.push(BenchResult {
