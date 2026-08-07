@@ -8,6 +8,9 @@ const NUMBER_OF_LINKED_LIST: u64 = 7;
 
 /// Determines the appropriate bucket index for a given allocation size.
 /// 
+/// # Arguments
+/// * `size` - The allocation size to find a bucket for. It must be an exact power of 2 starting at 128.
+///
 /// # Design Constraints
 /// This allocator makes a strict assumption that sizes passed to it are exactly 
 /// powers of 2, starting from 128 bytes (128, 256, 512, 1024, 2048, 4096, 8192+).
@@ -24,9 +27,6 @@ const NUMBER_OF_LINKED_LIST: u64 = 7;
 ///
 /// NOTE: Passing sizes `< 128` or non-power-of-2 sizes will result in logic errors
 /// or panics elsewhere in the allocator, as it relies on this exact mapping.
-///
-/// # Errors
-/// This method does not return an error.
 pub fn find_index(size: &u64) -> u64{
     
     let aux = *size >> 7;
@@ -63,19 +63,22 @@ impl<'a> AllocatedStruct<'a>
 
     /// Creates a new [AllocatedStruct] with the provided file manager, super block, optional transaction, and file ID.
     ///
-    /// # Errors
-    /// This method does not return an error.
+    /// # Arguments
+    /// * `file_manager` - Manages reading and writing to the disk to apply allocations.
+    /// * `super_block` - Tracks free lists and bump allocation pointers.
+    /// * `tx` - An optional WAL transaction to record allocations for crash recovery.
+    /// * `file_id` - Identifies which specific file (e.g., Structure or Reverse) the allocations belong to.
     pub fn new(file_manager: &'a mut FileManager, super_block: &'a mut SuperBlock, tx: Option<&'a mut WalTransaction>, file_id: FileId) -> Self{
         Self{ file_manager, super_block, tx, file_id}
     }
 
     /// Retrieves the free-list header offset for the given bucket index.
     ///
+    /// # Arguments
+    /// * `index` - The bucket index to look up the head offset for.
+    ///
     /// # Panics
     /// Panics if the `file_id` is not `Structure` or `Reverse`.
-    ///
-    /// # Errors
-    /// This method does not return an error.
     fn get_header(&self, index: &u64) -> u64 {
         match self.file_id {
             FileId::Structure => self.super_block.get_ith_header_structure(index),
@@ -86,14 +89,12 @@ impl<'a> AllocatedStruct<'a>
 
     /// Updates the free-list header offset for the given bucket index.
     ///
-    /// # Side Effects
-    /// Modifies the in-memory super block representation.
+    /// # Arguments
+    /// * `index` - The bucket index to update.
+    /// * `offset` - The new head offset for this bucket's free list.
     ///
     /// # Panics
     /// Panics if the `file_id` is not `Structure` or `Reverse`.
-    ///
-    /// # Errors
-    /// This method does not return an error.
     fn set_header(&mut self, index: &u64, offset: &u64) {
         match self.file_id {
             FileId::Structure => self.super_block.next_header_structure(index, offset),
@@ -104,14 +105,11 @@ impl<'a> AllocatedStruct<'a>
 
     /// Fallback bump allocator when free lists are empty.
     ///
-    /// # Side Effects
-    /// Modifies the `next_structure_free_block` in the super block.
+    /// # Arguments
+    /// * `size` - The number of bytes to allocate, used to advance the free block pointer.
     ///
     /// # Panics
     /// Panics if the `file_id` is not `Structure` or `Reverse`.
-    ///
-    /// # Errors
-    /// This method does not return an error.
     fn bump_allocate(&mut self, size: &u64) -> u64 {
         match self.file_id {
             FileId::Structure => self.super_block.get_free_block_structure(size),
@@ -122,11 +120,9 @@ impl<'a> AllocatedStruct<'a>
 
     /// Splits an unaligned capacity remainder into exact powers of 2 and registers them into free lists.
     ///
-    /// # Side Effects
-    /// Updates multiple super block headers and writes free block headers to disk.
-    ///
-    /// # Errors
-    /// This method does not return an error.
+    /// # Arguments
+    /// * `new_offset` - The starting offset of the remainder block to be split.
+    /// * `new_cap` - The total capacity of the remainder to distribute into free lists.
     fn split_capacity_into_power_of_2s(&mut self, new_offset: &u64, new_cap: &u64){
         let mut power_of_2: [u64; 40] = [0; 40];
         let mut cap_div = new_cap >> 7;
@@ -158,11 +154,9 @@ impl<'a> AllocatedStruct<'a>
 
     /// Removes the current block from the bucket's linked list.
     ///
-    /// # Side Effects
-    /// Updates the previous block's `next` pointer or the bucket head if `prev_offset` is uninitialized.
-    ///
-    /// # Errors
-    /// This method does not return an error.
+    /// # Arguments
+    /// * `prev_offset` - The offset of the previous block to update its next pointer, or `u64::MAX` if current is head.
+    /// * `cur_offset` - The offset of the current block being removed.
     fn skip_cur(&mut self, prev_offset: &u64, cur_offset: &u64){
         let cur_disk_edge_bytes = self.file_manager.reading_bytes(*cur_offset, *cur_offset + size_of::<DiskEdge>() as u64);
 
@@ -185,11 +179,10 @@ impl<'a> AllocatedStruct<'a>
 
     /// Writes boundary tags (a `DiskEdge` block) at the start and end of a free block.
     ///
-    /// # Side Effects
-    /// Writes to the active transaction or directly to memory-mapped files.
-    ///
-    /// # Errors
-    /// This method does not return an error.
+    /// # Arguments
+    /// * `start_offset` - The starting offset for the front boundary tag.
+    /// * `end_offset` - The end offset to place the back boundary tag just before it.
+    /// * `disk_edge` - The boundary tag metadata to write.
     fn write_disk_edges(&mut self, start_offset: &u64, end_offset: &u64, disk_edge: &DiskEdge){
         if let Some(ref mut t) = self.tx {
             t.write_bytes(self.file_id, *start_offset, disk_edge.convert_into_bytes());
@@ -202,15 +195,12 @@ impl<'a> AllocatedStruct<'a>
 
     /// Allocates a block of memory of at least `size` bytes.
     ///
+    /// # Arguments
+    /// * `size` - The minimum number of bytes needed for the allocation.
+    ///
     /// # Safety & Assumptions
     /// Expects `size` to be exactly a power of 2 >= 128. If `size` is an exact power of 2, 
     /// the block popped from buckets 0-5 is guaranteed to exactly match the requested size.
-    ///
-    /// # Side Effects
-    /// Reads from and writes to memory-mapped files, updates free list headers, and modifies the allocator state.
-    ///
-    /// # Errors
-    /// This method does not return an error.
     pub fn allocate_structure(&mut self, size: &u64) -> u64{
         let mut index: u64 = find_index(size);
 
@@ -293,19 +283,16 @@ impl<'a> AllocatedStruct<'a>
 
     /// Deallocates a `DiskNode` back into the allocator's free list.
     /// 
+    /// # Arguments
+    /// * `disk_node` - The node representing the memory block to return to the allocator.
+    ///
     /// # Assumptions
     /// The `capacity` of the deallocated `DiskNode` MUST be exactly a power of 2 >= 128 
     /// (128, 256, 512, etc.). This ensures it lands in the perfectly sized bucket 
     /// expected by `allocate_structure`.
     ///
-    /// # Side Effects
-    /// Writes boundary tags to the deallocated block and updates the super block's free list header.
-    ///
     /// # Panics
     /// Panics if the `file_id` is not `Structure` or `Reverse`.
-    ///
-    /// # Errors
-    /// This method does not return an error.
     pub fn deallocator(&mut self, disk_node: &DiskNode){
         // We need to use list_edges_offset or list_reverse_edges_offset based on FileId!
         let (offset, capacity) = match self.file_id {

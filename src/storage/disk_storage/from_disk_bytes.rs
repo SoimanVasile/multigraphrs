@@ -4,8 +4,7 @@
 pub trait FromDiskBytes {
     /// Constructs an **owned** instance from the given byte slice.
     ///
-    /// # Errors
-    /// None.
+    /// `bytes` is needed to provide the raw disk data to deserialize from.
     ///
     /// # Panics
     /// May panic if the byte slice length does not match the expected size
@@ -17,8 +16,7 @@ pub trait FromDiskBytes {
 ///
 /// Interprets the byte slice as UTF-8 and returns an **owned** `String`.
 ///
-/// # Errors
-/// None.
+/// `bytes` is needed to provide the raw UTF-8 disk data to deserialize from.
 ///
 /// # Panics
 /// Panics (via `unwrap`) if the bytes are not valid UTF-8.
@@ -34,8 +32,7 @@ macro_rules! impl_from_disk_bytes_numeric {
             impl FromDiskBytes for $t {
                 /// Deserializes a numeric type from disk bytes.
                 ///
-                /// # Errors
-                /// None.
+                /// `bytes` is needed to provide the raw disk data to deserialize from.
                 ///
                 /// # Panics
                 /// Panics if the byte slice length does not match the expected size.

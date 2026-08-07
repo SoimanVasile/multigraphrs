@@ -15,13 +15,11 @@ pub enum FileId {
     Reverse = 2,
     Data = 3,
     NodeId = 4,
+    NodeValue = 5,
 }
 
 impl FileId {
     /// Converts a `u8` value into an `Option<FileId>`.
-    ///
-    /// # Errors
-    /// Returns `None` if the provided value does not correspond to a valid `FileId`.
     pub fn from_u8(val: u8) -> Option<Self> {
         match val {
             0 => Some(FileId::Node),
@@ -29,6 +27,7 @@ impl FileId {
             2 => Some(FileId::Reverse),
             3 => Some(FileId::Data),
             4 => Some(FileId::NodeId),
+            5 => Some(FileId::NodeValue),
             _ => None,
         }
     }
@@ -306,6 +305,7 @@ fn replay_file(path: &PathBuf, files: &mut DBFiles) -> Result<(), DbError> {
                     FileId::Reverse => &mut files.file_reverse,
                     FileId::Data => &mut files.file_data,
                     FileId::NodeId => &mut files.file_node_id,
+                    FileId::NodeValue => &mut files.file_node_value,
                 };
                 match record {
                     WalRecord::Write { offset, bytes, .. } => {
@@ -398,6 +398,9 @@ impl WalManager {
     ///
     /// # Panics
     /// Panics if the initial `wal.bin` file cannot be opened.
+    ///
+    /// # Errors
+    /// Returns [`std::io::Error`] if spawning the thread fails.
     pub fn start(&mut self, max_file_size: u64) -> Result<(), std::io::Error> {
         let (request_tx, request_rx) = std::sync::mpsc::channel();
         self.request_tx = Some(request_tx);
@@ -413,18 +416,11 @@ impl WalManager {
     /// Sends a serialized transaction to the background thread and
     /// blocks until the data is durable on disk.
     ///
-    /// # Returns
-    /// - `Ok(true)` — the WAL was rotated; the caller **must** flush
-    ///   all four graph data files before issuing the next commit.
-    /// - `Ok(false)` — normal commit, no flush needed.
-    ///
     /// # Errors
-    /// - [`std::io::ErrorKind::NotConnected`] if [`start`](Self::start)
-    ///   was never called.
-    /// - [`std::io::ErrorKind::BrokenPipe`] if the background thread
-    ///   has panicked or been dropped.
-    /// - Any I/O error propagated from the background thread's
-    ///   `write_all` or `sync_all`.
+    /// Returns [`std::io::Error`] on failure:
+    /// - [`std::io::ErrorKind::NotConnected`] if [`start`](Self::start) was never called.
+    /// - [`std::io::ErrorKind::BrokenPipe`] if the background thread has panicked or been dropped.
+    /// - Any I/O error propagated from the background thread's `write_all` or `sync_all`.
     pub fn commit(&self, tx: &WalTransaction) -> Result<bool, std::io::Error> {
         let bytes = tx.serialize();
 

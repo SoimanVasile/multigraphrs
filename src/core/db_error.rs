@@ -19,6 +19,7 @@ pub enum DbError {
     /// An internal file ID does not map to a valid storage file.
     InvalidFileId(u8),
 
+    /// The WAL thread is dead and cannot process further write-ahead logs.
     WalThreadDead,
 
     /// The database has been halted due to a previous fatal I/O error.

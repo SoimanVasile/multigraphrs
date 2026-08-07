@@ -33,12 +33,9 @@ where
     /// Creates a new `DiskEdgeIterator` starting at the given offset.
     ///
     /// # Arguments
-    /// * `mmap_ref` - **Immutable reference** to the `DiskStorage` (borrows for lifetime `'a`).
-    /// * `offset` - Starting byte offset in `structure.bin` (**copied**, `u64` is `Copy`).
-    /// * `number_of_edges` - Number of edges to iterate (**copied**).
-    ///
-    /// # Errors
-    /// This method does not return an error.
+    /// * `mmap_ref` - Provides access to the memory-mapped files needed for reading structure and weight data.
+    /// * `offset` - Determines where in `structure.bin` the iteration should begin.
+    /// * `number_of_edges` - Specifies the exact number of edges to read before iteration stops.
     pub fn new(mmap_ref: &'a DiskStorage<K, W>, offset: &u64, number_of_edges: &u64) -> DiskEdgeIterator<'a, K, W>{
         DiskEdgeIterator{mmap_ref, current_offset: *offset, edges_left: *number_of_edges}
     }
@@ -50,20 +47,10 @@ where
 {
     type Item=Edge<W>;
 
-    /// Advances the iterator and returns the next `Edge<W>`.
-    ///
-    /// # Returns
-    /// * `Some(Edge<W>)` — An **owned** edge with its weight deserialized from disk.
-    /// * `None` — When all edges have been consumed.
+    /// Advances the iterator and returns the next `Edge<W>`. Returns `None` when all edges have been consumed.
     ///
     /// # Panics
     /// Panics if the current offset exceeds the structure or data memory map bounds.
-    ///
-    /// # Side Effects
-    /// Updates the `current_offset` and decrements `edges_left`.
-    ///
-    /// # Errors
-    /// This method does not return an error directly, but may panic on invalid bounds.
     fn next(&mut self) -> Option<<Self as Iterator>::Item>{
         if self.edges_left == 0{
             return None;
@@ -108,12 +95,9 @@ where
     /// Creates a new `DiskReverseEdgeIterator` starting at the given offset.
     ///
     /// # Arguments
-    /// * `mmap_ref` - **Immutable reference** to the `DiskStorage` (borrows for lifetime `'a`).
-    /// * `offset` - Starting byte offset in `reverse_structure.bin` (**copied**).
-    /// * `number_of_edges` - Number of reverse entries to iterate (**copied**).
-    ///
-    /// # Errors
-    /// This method does not return an error.
+    /// * `mmap_ref` - Provides access to the memory-mapped files needed for reading reverse structure data.
+    /// * `offset` - Determines where in `reverse_structure.bin` the iteration should begin.
+    /// * `number_of_edges` - Specifies the exact number of reverse entries to read before iteration stops.
     pub fn new(mmap_ref: &'a DiskStorage<K, W>, offset: &u64, number_of_edges: &u64) -> DiskReverseEdgeIterator<'a, K, W>{
         DiskReverseEdgeIterator{mmap_ref, current_offset: *offset, edges_left: *number_of_edges}
     }
@@ -125,21 +109,11 @@ where
 {
     type Item=u64;
 
-    /// Advances the iterator and returns the next reverse edge node ID.
-    ///
-    /// # Returns
-    /// * `Some(u64)` — The node ID (**copy**, `u64` is `Copy`).
-    /// * `None` — When all entries have been consumed.
+    /// Advances the iterator and returns the next reverse edge node ID. Returns `None` when all entries have been consumed.
     ///
     /// # Panics
     /// * Panics if the current offset exceeds the reverse structure memory map bounds.
     /// * Panics (via `unwrap`) if the byte slice cannot be converted to a `[u8; 8]` array.
-    ///
-    /// # Side Effects
-    /// Updates the `current_offset` and decrements `edges_left`.
-    ///
-    /// # Errors
-    /// This method does not return an error directly, but may panic on invalid bounds or deserialization failure.
     fn next(&mut self) -> Option<<Self as Iterator>::Item>{
         if self.edges_left == 0{
             return None;

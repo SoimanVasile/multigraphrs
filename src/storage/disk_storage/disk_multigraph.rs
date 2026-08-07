@@ -1,3 +1,4 @@
+use crate::EdgeView;
 use crate::dictionary::dictionary_strategy::DictionaryStrategy;
 use crate::dictionary::disk_dictionary::DiskDictionary;
 use crate::storage::disk_storage::from_disk_bytes::AsDiskBytes;
@@ -45,6 +46,7 @@ fn allocated_disk_node(disk_node: &mut DiskNode, file_manager: &mut FileManager,
         FileId::Node => {return Ok(());},
         FileId::Data => {return Ok(());},
         FileId::NodeId => {return Ok(());},
+        FileId::NodeValue => {return Ok(());},
     };
     *edge_offset = {
         let mut alloc = AllocatedStruct::new(file_manager, super_block, Some(tx), file_id);
@@ -77,6 +79,7 @@ fn check_node_allocated(disk_node: &DiskNode, file_id: FileId) -> Result<bool, D
         FileId::Data => return Err(DbError::InvalidFileId(3)),
         FileId::Node => return Err(DbError::InvalidFileId(2)),
         FileId::NodeId => return Err(DbError::InvalidFileId(4)),
+        FileId::NodeValue => return Err(DbError::InvalidFileId(5)),
     };
 
     Ok(edge_offset == u64::MAX)
@@ -190,7 +193,6 @@ where
     pub(crate) file_manager_reverse_edge: FileManager,
     pub(crate) file_manager_weight_data: FileManager,
     pub(crate) wal_manager: WalManager,
-    pub(crate) directory: PathBuf,
     pub(crate) hashed_nodes: DiskDictionary<K>,
     node_count: u64,
     edge_count: u64,
@@ -224,30 +226,19 @@ where
         }
     }
 
-    /// Allocates a new [`DiskStorage`] in the specified directory.
+    /// Initializes a new [`DiskStorage`] in the given directory.
     ///
-    /// This constructor handles the full initialization of the database storage:
-    /// 1. It creates the directory and any missing parent directories.
-    /// 2. It opens (or creates) the four required backing files: `structure.bin`, 
-    ///    `data.bin`, `node.bin`, and `reverse_structure.bin`.
-    /// 3. It initializes new files to [`FILE_INITIAL_SIZE`].
-    /// 4. It establishes memory maps for all files.
+    /// Creates the directory (and any missing parents), opens or creates the
+    /// backing files (`structure.bin`, `data.bin`, `node.bin`, `reverse_structure.bin`,
+    /// `node_id.bin`, `node_id_data.bin`), replays the WAL for crash recovery,
+    /// and starts the background WAL writer thread.
     ///
     /// # Arguments
-    /// * `directory` - The path where the storage files will be managed.
-    ///
-    /// # Side Effects
-    /// Creates directories, files, and memory maps. Replays WAL if present.
-    ///
-    /// # Errors
-    /// None (panics instead).
+    /// * `directory` — Path where the storage files will be created or opened.
     ///
     /// # Panics
-    /// This function will panic if:
-    /// * The directory cannot be created due to permission or path errors.
-    /// * Any of the required `.bin` files cannot be opened or created.
-    /// * The filesystem fails to report file metadata or set the initial file length.
-    /// * Memory mapping the files fails (e.g., out of virtual address space).
+    /// Panics if the directory cannot be created, any backing file cannot
+    /// be opened, WAL replay fails, or the WAL background thread cannot start.
     pub fn new<P: AsRef<Path>>(directory: P) -> DiskStorage<K, W>
     {
         let dir = directory.as_ref();
@@ -307,7 +298,6 @@ where
             node_count,
             edge_count,
             wal_manager,
-            directory: dir.to_path_buf(),
             is_poisoned: AtomicBool::new(false),
             hashed_nodes: dictionary,
             _marker: PhantomData::<W>
@@ -375,47 +365,36 @@ where
         *super_block
     }
 
-    /// Calculates the absolute byte offset of a [`DiskNode`] within the node storage file
+    /// Calculates the absolute byte offset of a [`DiskNode`] within the node storage file.
     ///
-    /// The `node.bin` file follow a linear layout where the [SuperBlock] resides at the head of the
-    /// file, follow by a contigous, fixed size [`DiskNode`] records
+    /// The `node.bin` file follows a linear layout: a [`SuperBlock`] at the head,
+    /// followed by contiguous, fixed-size [`DiskNode`] records.
     ///
-    /// The offset is calculated:
-    /// $$offset = SUPER\_BLOCK\_SIZE + (node\_id \times size\_of::<DiskNode>())$$
+    /// The offset is: `SUPER_BLOCK_SIZE + (node_id * size_of::<DiskNode>())`
     ///
     /// # Arguments
-    /// * `node_id` - the zero-based index of the node to locate
-    ///
-    /// # Return
-    /// * The node offset from the start of the memory map where the node's data begins
-    ///
-    /// # Errors
-    /// None.
-    ///
+    /// * `node_id` — Zero-based index of the node to locate.
     pub fn calculate_node_offset(&self, node_id: &u64) -> u64{
         SUPER_BLOCK_SIZE as u64 + (node_id * std::mem::size_of::<DiskNode>() as u64)
     }
 
-    /// Persists a [`DiskNode`] to its indexed position withing the `node.bin` file.
+    /// Persists a [`DiskNode`] to its indexed position within `node.bin`.
     ///
-    /// This function uses the [`node_idx`] within provided [`DiskNode`] to determine the write
-    /// destination via [`Self::calculate_node_offset`]
-    /// 
-    /// Note that this function writes to the memory-mapped region. The data will be synced to the
-    /// physical disk by the Operating System asynchronously unless an explicit flush is triggered
+    /// Uses the node's `node_idx` field to compute the write offset via
+    /// [`calculate_node_offset`](Self::calculate_node_offset). The data is
+    /// written to the memory-mapped region and synced to disk asynchronously
+    /// by the OS unless explicitly flushed.
     ///
     /// # Arguments
-    /// * `disk_node` - the node record to be serialized and written
-    ///
-    /// # Side Effects
-    /// Writes the node data to the memory map or WAL transaction. May increase file size.
+    /// * `disk_node` — The node record to serialize and write.
+    /// * `tx` — Optional WAL transaction; if `Some`, writes are recorded in the
+    ///   transaction instead of going directly to the mmap.
     ///
     /// # Errors
-    /// Returns `std::io::Error` if file size cannot be increased.
+    /// Returns [`DbError`] if the backing file cannot be grown.
     ///
     /// # Panics
-    /// Panics if the calculated offset or node size exceeds the current bounds of the memory map.
-    /// See [`writing_bytes_to_mmap`]
+    /// Panics if the computed offset exceeds the memory map bounds.
     pub fn write_disk_node(&mut self, disk_node: &DiskNode, mut tx: Option<&mut WalTransaction>) -> Result<(), DbError>{
         let offset = self.calculate_node_offset(&disk_node.node_idx);
         let bytes = disk_node.convert_to_bytes();
@@ -431,23 +410,17 @@ where
         Ok(())
     }
 
-    /// Loads a copy of [`DiskNode`] with the [`node_idx`] equal to `source`
+    /// Loads a copy of the [`DiskNode`] at the given index.
     ///
-    /// This function uses the index to determine the read destination via
-    /// [`Self::calculate_node_offset`]
-    ///
-    /// **Important** that this function only gets a copy from the memory-mapped, so the changed made to the
-    /// returned [`DiskNode`] will not be seen in the file, until a write has been made
+    /// The returned struct is an independent copy — modifications to it
+    /// are not reflected on disk until [`write_disk_node`](Self::write_disk_node)
+    /// is called.
     ///
     /// # Arguments
-    /// * `source` - The unique identifier (index) of the node to retrieve
-    /// 
-    /// # Errors
-    /// None.
+    /// * `source` — Zero-based node index.
     ///
     /// # Panics
-    /// Panics if the calculated offset or node size exceeds the current bounds of the memory map.
-    /// (e.g. `source` is out of bounds)
+    /// Panics if `source` points beyond the memory map bounds.
     pub fn get_disk_node(&self, source: &u64) -> DiskNode{
         let offset = self.calculate_node_offset(source);
 
@@ -1433,9 +1406,10 @@ where
     }
 
     fn hashed_nodes_insert(&mut self, key: K, node_id: u64) -> Result<(), GraphError> {
-        Ok(self.hashed_nodes.insert(key, node_id).map_err(|e| {
+        self.hashed_nodes.insert(key, node_id).map_err(|e| {
             GraphError::Db(e)
-        })?)
+        })?;
+        Ok(())
     }
 
     fn hashed_nodes_get(&self,  key: &K) -> Result<Option<u64>, GraphError> {
@@ -1446,5 +1420,9 @@ where
         Ok(self.hashed_nodes.remove(key).map_err(|e| {
             GraphError::Db(e)
         })?)
+    }
+
+    fn reverse_hashing_get_node_data(&self, id: u64) -> Option<K> {
+        self.hashed_nodes.reverse_node_data(id)
     }
 }
