@@ -832,7 +832,8 @@ where
 
         self.write_superblock(&super_block, Some(&mut tx));
 
-        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
+        self.apply_wal_transaction(&tx);
         Ok(new_ids)
     }
 
@@ -996,33 +997,72 @@ where
     /// Removes the edges in the `edges` array which the target and weight match
     ///
     /// # Arguments
-    /// * `edges` - an array with the strucutre [(source, target, weight)]
+    /// * `edges` - an array with the strucutre [(source, `Edge`)]
     ///
     /// # Panics
     /// Panics if `source` is out of bounds
     fn bulk_remove_edge(&mut self, edges: &[(u64, Edge<W>)]) -> Result<(), GraphError> {
         self.check_poisoned()?;
-        let mut seen_disk_node: HashMap<u64, DiskNode> = HashMap::with_capacity(edges.len()/2);
+
+        let mut sorted_edges = edges.to_vec();
+        sorted_edges.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        
         let mut super_block: SuperBlock = self.get_super_block();
         let mut tx = WalTransaction::new();
 
-        for (source, edge) in edges{
-            let edges = self.get_edges(source);
+        for chunk in sorted_edges.chunk_by(|a, b| a.0 == b.0) {
+            let source = chunk[0].0;
+            let mut edges_to_remove: Vec<Edge<W>> = chunk.iter().map(|&(_, ref e)| e.clone()).collect();
+            
+            let mut disk_node = self.get_disk_node(&source);
+            if disk_node.number_of_edges == 0 {
+                continue;
+            }
 
-            if let Some((index, _)) = edges.enumerate().find(|(_, e)| e.get_target() == edge.get_target() && e.get_weight() == edge.get_weight()){
-                let mut disk_node = *seen_disk_node
-                    .entry(*source)
-                    .or_insert_with(|| self.get_disk_node(source));                
-                self.swap_remove_disk_edge(&mut disk_node, &(index as u64),&mut super_block, Some(&mut tx))
-                    .map_err(|e| {
-                        self.poison();
-                        GraphError::Db(e)
-                    })?;
-                seen_disk_node.insert(*source, disk_node);
+            let start_offset = disk_node.list_edges_offset;
+            let total_bytes = disk_node.number_of_edges * std::mem::size_of::<DiskEdge>() as u64;
+            let all_edges_bytes = self.file_manager_edge_structure.reading_bytes(start_offset, start_offset + total_bytes);
+            let mut disk_edges: Vec<DiskEdge> = bytemuck::cast_slice(all_edges_bytes).to_vec();
+            
+            let mut indices_to_remove = Vec::new();
+
+            for (i, disk_edge) in disk_edges.iter().enumerate() {
+                let weight_bytes = self.file_manager_weight_data.reading_bytes(disk_edge.weight_offset, disk_edge.weight_offset + disk_edge.weight_len);
+                let weight = W::from_bytes(weight_bytes);
+                
+                if let Some(pos) = edges_to_remove.iter().position(|e| e.get_target() == disk_edge.node && e.get_weight() == weight) {
+                    indices_to_remove.push(i);
+                    edges_to_remove.swap_remove(pos);
+                }
+                if edges_to_remove.is_empty() {
+                    break;
+                }
+            }
+
+            if !indices_to_remove.is_empty() {
+                indices_to_remove.sort_unstable_by(|a, b| b.cmp(a));
+                for idx in indices_to_remove.iter() {
+                    disk_edges.swap_remove(*idx);
+                }
+
+                let removed_count = indices_to_remove.len() as u64;
+                if !disk_edges.is_empty() {
+                    let new_bytes = bytemuck::cast_slice(&disk_edges);
+                    tx.write_bytes(FileId::Structure, start_offset, new_bytes);
+                }
+                
+                let zero_start = start_offset + disk_edges.len() as u64 * std::mem::size_of::<DiskEdge>() as u64;
+                tx.zero_mmap(FileId::Structure, zero_start, start_offset + total_bytes);
+
+                disk_node.number_of_edges -= removed_count;
+                super_block.edge_count -= removed_count;
+                self.write_disk_node(&disk_node, Some(&mut tx)).map_err(|e| { self.poison(); GraphError::Db(e) })?;
             }
         }
+        
         self.write_superblock(&super_block, Some(&mut tx));
-        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
+        self.apply_wal_transaction(&tx);
         Ok(())
     }
 
@@ -1217,8 +1257,8 @@ where
 
         for (source, target, _) in edges{
             let mut disk_node = *seen_disk_node
-                .entry(*source)
-                .or_insert_with(|| self.get_disk_node(source));
+                .entry(*target)
+                .or_insert_with(|| self.get_disk_node(target));
             if check_node_allocated(&disk_node, FileId::Reverse).map_err(|e| { self.poison(); GraphError::from(e) })? {
                 allocated_disk_node(&mut disk_node, &mut self.file_manager_reverse_edge, FileId::Reverse, &mut super_block, &mut tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
             }
@@ -1325,28 +1365,22 @@ where
 
         for chunk in sorted_edges.chunk_by(|a, b| a.0 == b.0) {
             let source = chunk[0].0;
-            
-            // Extract just the origins we want to remove for this source
             let mut origins_to_remove: Vec<u64> = chunk.iter().map(|&(_, o)| o).collect();
-            let mut indices_to_remove = Vec::new();
             
             let mut disk_node = self.get_disk_node(&source);
+            if disk_node.number_of_reverse_edges == 0 {
+                continue;
+            }
             
-            let total_bytes = disk_node.number_of_reverse_edges * size_of::<u64>() as u64;
             let start_offset = disk_node.list_reverse_edges_offset;
+            let total_bytes = disk_node.number_of_reverse_edges * std::mem::size_of::<u64>() as u64;
+            let all_edges_bytes = self.file_manager_reverse_edge.reading_bytes(start_offset, start_offset + total_bytes);
+            let mut reverse_edges: Vec<u64> = bytemuck::cast_slice(all_edges_bytes).to_vec();
             
-            let all_edges_bytes = self.file_manager_reverse_edge
-                .reading_bytes(start_offset, start_offset + total_bytes);
+            let mut indices_to_remove = Vec::new();
 
-            for i in 0..disk_node.number_of_reverse_edges {
-                let byte_start = (i * size_of::<u64>() as u64) as usize;
-                let byte_end = byte_start + size_of::<u64>();
-                
-                let current_origin = u64::from_le_bytes(
-                    all_edges_bytes[byte_start..byte_end].try_into().unwrap()
-                );
-
-                if let Some(pos) = origins_to_remove.iter().position(|r| *r == current_origin) {
+            for (i, current_origin) in reverse_edges.iter().enumerate() {
+                if let Some(pos) = origins_to_remove.iter().position(|r| r == current_origin) {
                     indices_to_remove.push(i);
                     origins_to_remove.swap_remove(pos);
                 }
@@ -1355,18 +1389,28 @@ where
                 }
             }
 
-            indices_to_remove.sort_unstable_by(|a, b| b.cmp(a));
+            if !indices_to_remove.is_empty() {
+                indices_to_remove.sort_unstable_by(|a, b| b.cmp(a));
+                for idx in indices_to_remove.iter() {
+                    reverse_edges.swap_remove(*idx);
+                }
 
-            for index in indices_to_remove {
-                self.swap_remove_disk_reverse_edge(&mut disk_node, &index, Some(&mut tx))
-                    .map_err(|e|{
-                        self.poison();
-                        GraphError::Db(e)
-                    })?;
+                let removed_count = indices_to_remove.len() as u64;
+                if !reverse_edges.is_empty() {
+                    let new_bytes = bytemuck::cast_slice(&reverse_edges);
+                    tx.write_bytes(FileId::Reverse, start_offset, new_bytes);
+                }
+                
+                let zero_start = start_offset + reverse_edges.len() as u64 * std::mem::size_of::<u64>() as u64;
+                tx.zero_mmap(FileId::Reverse, zero_start, start_offset + total_bytes);
+
+                disk_node.number_of_reverse_edges -= removed_count;
+                self.write_disk_node(&disk_node, Some(&mut tx)).map_err(|e| { self.poison(); GraphError::Db(e) })?;
             }
         }
 
-        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
+        self.apply_wal_transaction(&tx);
         Ok(())
     }
 
@@ -1424,5 +1468,12 @@ where
 
     fn reverse_hashing_get_node_data(&self, id: u64) -> Option<K> {
         self.hashed_nodes.reverse_node_data(id)
+    }
+
+    fn hashed_nodes_bulk_insert(&mut self, nodes: &[(K, u64)]) -> Result<(), GraphError> {
+        Ok(self.hashed_nodes.bulk_insert(nodes).map_err(|e| {
+            self.poison();
+            GraphError::Db(e)
+        })?)
     }
 }

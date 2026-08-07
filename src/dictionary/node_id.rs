@@ -1,6 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 
-use crate::storage::disk_storage::from_disk_bytes::FromDiskBytes;
+use crate::storage::disk_storage::from_disk_bytes::{AsDiskBytes, FromDiskBytes};
 
 /// Represents an internal node ID including metadata for disk storage location and size.
 #[repr(C)]
@@ -40,5 +40,12 @@ impl FromDiskBytes for NodeId{
     /// * `bytes` - The byte slice containing the serialized `NodeId`.
     fn from_bytes(bytes: &[u8]) -> Self {
         *bytemuck::from_bytes(bytes)
+    }
+}
+
+impl AsDiskBytes for NodeId{
+
+    fn as_disk_bytes(&self) -> Vec<u8> {
+        bytemuck::bytes_of(self).to_vec()
     }
 }

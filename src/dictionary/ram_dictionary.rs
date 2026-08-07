@@ -69,6 +69,13 @@ where
         }
         self.reverese_hashed_nodes[id as usize].clone()
     }
+
+    fn bulk_insert(&mut self, nodes: &[(K, u64)]) -> Result<(), DbError> {
+        for (data, id) in nodes{
+            self.insert(data.clone(), *id);
+        }
+        Ok(())
+    }
 }
 
 impl<K> RamDictionary<K>

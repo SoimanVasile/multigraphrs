@@ -126,7 +126,7 @@ where
         let node_id = self.adjacency_list.add_node()?;
         self.node_count += 1;
         
-        self.adjacency_list.hashed_nodes_insert(source.clone(), node_id);
+        self.adjacency_list.hashed_nodes_insert(source.clone(), node_id)?;
         Ok(source)
 
     }
@@ -140,10 +140,11 @@ where
 
         self.node_count += nodes.len();
 
-        for (index, node) in nodes.iter().enumerate(){
-            let id = nodes_id[index];
-            self.adjacency_list.hashed_nodes_insert(node.clone(), id);
+        let mut data_id: Vec<(K, u64)> = Vec::with_capacity(nodes.len());
+        for (data, id) in nodes.iter().zip(nodes_id.iter()){
+            data_id.push((data.clone(), *id));
         }
+        self.adjacency_list.hashed_nodes_bulk_insert(&data_id)?;
         nodes.clear();
         Ok(())
     }

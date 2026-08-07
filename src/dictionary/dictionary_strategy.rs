@@ -43,4 +43,6 @@ where
     fn remove(&mut self, key: &K ) -> Result<Option<u64>, DbError>;
 
     fn reverse_node_data(&self, id: u64) -> Option<K>;
+
+    fn bulk_insert(&mut self, nodes: &[(K, u64)]) -> Result<(), DbError>;
 }

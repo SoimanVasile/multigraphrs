@@ -303,6 +303,12 @@ where
     fn reverse_hashing_get_node_data(&self, id: u64) -> Option<K> {
         self.hashed_nodes.reverse_node_data(id)
     }
+
+    fn hashed_nodes_bulk_insert(&mut self, nodes: &[(K, u64)]) -> Result<(), GraphError> {
+        Ok(self.hashed_nodes.bulk_insert(nodes).map_err(|e| {
+            GraphError::Db(e)
+        })?)
+    }
 }
 
 impl<K, W> Default for RamStorage<K, W>

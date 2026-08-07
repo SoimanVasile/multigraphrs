@@ -2,7 +2,7 @@ use std::{hash::Hash, marker::PhantomData, path::Path};
 
 use ahash::AHashMap;
 
-use crate::{core::db_error::DbError, dictionary::dictionary_strategy::DictionaryStrategy, storage::disk_storage::{file_manager::FileManager, from_disk_bytes::{AsDiskBytes, FromDiskBytes}, wal::{FileId, WalManager, WalTransaction}}};
+use crate::{core::db_error::DbError, dictionary::dictionary_strategy::DictionaryStrategy, storage::disk_storage::{file_manager::FileManager, from_disk_bytes::{AsDiskBytes, FromDiskBytes}, wal::{FileId, WalManager, WalRecord, WalTransaction}}};
 
 use crate::dictionary::node_id::NodeId;
 
@@ -19,6 +19,7 @@ where
     wal_manager: WalManager,
     node_type: PhantomData<K>,
     hashing: AHashMap<K, u64>,
+    data_eof: u64,
 }
 
 impl<K> DiskDictionary<K>
@@ -52,13 +53,17 @@ where
 
         let wal_manager = wal_manager.clone();
 
-        Self{
+        let mut dict = Self{
             file_data: file_node_value_id,
             file_node_id,
             wal_manager,
             node_type: PhantomData,
-            hashing: AHashMap::new()
-        }
+            hashing: AHashMap::new(),
+            data_eof: 0,
+        };
+        
+        dict.populating().expect("Failed to populate DiskDictionary");
+        dict
     }
 
     /// Calculates the file byte offset for a given node ID.
@@ -83,26 +88,83 @@ where
     /// Returns a [`DbError`] if an underlying storage or file system read operation fails.
     fn populating(&mut self) -> Result<(), DbError>{
         let mut offset = 0;
+        let mut max_data_eof = 0;
         while offset < self.file_node_id.file_len()?{
-            let node_id_bytes = self.file_node_id.reading_bytes(0, 0 + size_of::<NodeId>() as u64);
+            let node_id_bytes = self.file_node_id.reading_bytes(offset, offset + size_of::<NodeId>() as u64);
             let node_id: NodeId = NodeId::from_bytes(node_id_bytes);
                 
             if node_id.data_len == 0{
                 break;
             }
 
-            if node_id.data_len == u64::MAX{
-                continue;
+            if node_id.data_len != u64::MAX {
+                let bytes = self.file_data.reading_bytes(node_id.data_offset, node_id.data_offset + node_id.data_len);
+                let key = K::from_bytes(bytes);
+
+                self.hashing.insert(key, self.calculate_id_from_offset(offset));
+                
+                let current_eof = node_id.data_offset + node_id.data_len;
+                if current_eof > max_data_eof {
+                    max_data_eof = current_eof;
+                }
             }
-
-            let bytes = self.file_data.reading_bytes(node_id.data_offset, node_id.data_offset + node_id.data_len);
-            let key = K::from_bytes(bytes);
-
-            self.hashing.insert(key, self.calculate_id_from_offset(node_id.data_offset));
 
             offset += size_of::<NodeId>() as u64;
         }
+        self.data_eof = max_data_eof;
         Ok(())
+    }
+
+    fn resize_file_node(&mut self, offset: u64, tx: &mut WalTransaction) -> Result<(), DbError>{
+        while offset as u64 > self.file_node_id.file_len()? {
+            let next_size = self.file_node_id.check_next_size(self.file_node_id.file_len()?)?;
+            tx.increase_file_size(FileId::NodeId, next_size);
+            self.file_node_id.increase_file_size()?;
+        }
+        Ok(())
+    }
+
+    fn resize_file_data(&mut self, offset: u64, tx: &mut WalTransaction) -> Result<(), DbError>{
+        while offset > self.file_data.file_len()? {
+            let next_size = self.file_data.check_next_size(self.file_data.file_len()?)?;
+            tx.increase_file_size(FileId::NodeValue, next_size);
+            self.file_data.increase_file_size()?;
+        }
+        Ok(())
+    }
+
+
+    pub fn apply_wal_transaction(&mut self, tx: &WalTransaction) {
+        for record in &tx.records {
+            match record {
+                WalRecord::Write { file_id, offset, bytes } => {
+                    let fm = match file_id {
+                        FileId::NodeId => &mut self.file_node_id,
+                        FileId::NodeValue => &mut self.file_data, 
+                        _ => continue,
+                    };
+                    fm.writing_bytes_to_mmap(*offset, *offset + bytes.len() as u64, bytes);
+                }
+                WalRecord::Zero { file_id, offset, end } => {
+                    let fm = match file_id {
+                        FileId::NodeId => &mut self.file_node_id,
+                        FileId::NodeValue => &mut self.file_data,
+                        _ => continue,
+                    };
+                    fm.zeroing_mmap(*offset, *end);
+                }
+                WalRecord::CopyWithin { file_id, src_start, src_end, dest_start } => {
+                    let fm = match file_id {
+                        FileId::NodeId => &mut self.file_node_id,
+                        FileId::NodeValue => &mut self.file_data,
+                        _ => continue,
+                    };
+                    fm.copy_within(*src_start, *src_end, *dest_start);
+                }
+                WalRecord::IncreaseFileSize { file_id: _, size: _} => {                    // Already applied directly to satisfy length checks during buffer phase.
+                }
+            }
+        }
     }
 }
 
@@ -129,7 +191,7 @@ where
     fn insert(&mut self, key: K, id: u64) -> Result<Option<u64>, DbError> {
 
         let offset = self.calculate_offset_from_id(id);
-        let data_offset = self.file_data.file_len().unwrap();
+        let data_offset = self.data_eof;
 
         let key_bytes = key.as_disk_bytes();
         let data_len = key_bytes.len() as u64;
@@ -139,18 +201,9 @@ where
 
         let mut tx = WalTransaction::new();
 
-        while offset + bytes.len() as u64 > self.file_node_id.file_len()? {
-            let next_size = self.file_node_id.check_next_size(self.file_node_id.file_len()?)?;
-            tx.increase_file_size(FileId::NodeId, next_size);
-            self.file_node_id.increase_file_size()?;
-        }
-        
+        self.resize_file_node(offset + bytes.len() as u64, &mut tx)?;
+        self.resize_file_data(data_offset + key_bytes.len() as u64, &mut tx)?;
         // 2. Resize Data file if necessary
-        while data_offset + key_bytes.len() as u64 > self.file_data.file_len()? {
-            let next_size = self.file_data.check_next_size(self.file_data.file_len()?)?;
-            tx.increase_file_size(FileId::NodeValue, next_size);
-            self.file_data.increase_file_size()?;
-        }
         tx.write_bytes(FileId::NodeId, offset, bytes);
 
         tx.write_bytes(FileId::NodeValue, data_offset, &key_bytes);
@@ -161,6 +214,8 @@ where
 
         self.file_node_id.writing_bytes_to_mmap(offset, offset + bytes.len() as u64, bytes);
         self.file_data.writing_bytes_to_mmap(data_offset, data_offset + key_bytes.len() as u64, &key_bytes);
+        
+        self.data_eof += key_bytes.len() as u64;
 
         Ok(self.hashing.insert(key, id))
     }
@@ -216,5 +271,31 @@ where
 
             Some(K::from_bytes(bytes))
         }
+    }
+
+    fn bulk_insert(&mut self, nodes: &[(K, u64)]) -> Result<(), DbError> {
+        let mut tx = WalTransaction::new();
+        for (node_data, id) in nodes{
+            let offset = self.calculate_offset_from_id(*id);
+            let data_bytes = node_data.as_disk_bytes();
+            
+            let data_offset = self.data_eof;
+            let node_id = NodeId::new(data_bytes.len() as u64, data_offset);
+
+            self.resize_file_node(offset + size_of::<NodeId>() as u64, &mut tx)?;
+            self.resize_file_data(data_offset + data_bytes.len() as u64, &mut tx)?;
+
+            tx.write_bytes(FileId::NodeId, offset, &node_id.as_disk_bytes());
+            tx.write_bytes(FileId::NodeValue, data_offset, &data_bytes);
+
+            self.data_eof += data_bytes.len() as u64;
+
+            self.hashing.insert(node_data.clone(), *id);
+        }
+
+        self.wal_manager.commit(&tx)?;
+
+        self.apply_wal_transaction(&tx);
+        Ok(())
     }
 }
