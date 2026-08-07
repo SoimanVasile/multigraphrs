@@ -22,8 +22,7 @@ fn test_remove_node_directed() {
     assert_eq!(graph.degree(&"C".into()).unwrap(), 1);
 
     // Remove B
-    let removed = graph.remove_node(&"B".into()).unwrap();
-    assert_eq!(removed, "B".to_string());
+    graph.remove_node(&"B".into()).unwrap();
     assert_eq!(graph.node_count(), 2);
 
     // The edges A -> B and C -> B should be removed
@@ -116,7 +115,7 @@ fn remove_same_node_twice_returns_error() {
     let mut graph = RamMultiGraph::<String, u32, Directed>::new();
     graph.add_node("A".into()).unwrap();
 
-    assert_eq!(graph.remove_node(&"A".into()), Ok("A".to_string()));
+    assert_eq!(graph.remove_node(&"A".into()), Ok(()));
     // Second removal should fail
     assert_eq!(graph.remove_node(&"A".into()), Err(GraphError::NodeNotFound));
 }

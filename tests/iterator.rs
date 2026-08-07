@@ -70,7 +70,7 @@ fn iter_undirected_with_edges() {
     g.add_edge(1, 2).unwrap();
 
     for (node, edges) in g.iter() {
-        match *node {
+        match node {
             1 => {
                 assert_eq!(edges.len(), 1);
                 assert_eq!(*edges[0].get_target(), 2);
@@ -122,7 +122,7 @@ fn iter_weighted_undirected() {
     for (node, edges) in g.iter() {
         assert_eq!(edges.len(), 1);
         assert_eq!(*edges[0].get_weight(), 500);
-        match *node {
+        match node {
             10 => assert_eq!(*edges[0].get_target(), 20),
             20 => assert_eq!(*edges[0].get_target(), 10),
             _ => panic!("Unexpected node"),
@@ -195,7 +195,7 @@ fn iter_parallel_edges() {
     g.add_edge(1, 2).unwrap();
 
     for (node, edges) in g.iter() {
-        match *node {
+        match node {
             1 => assert_eq!(edges.len(), 3),
             2 => assert!(edges.is_empty()),
             _ => panic!("Unexpected node"),
