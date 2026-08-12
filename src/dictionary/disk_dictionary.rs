@@ -43,7 +43,7 @@ where
         let dir = path.as_ref();
         
         let node_id_path = dir.join("node_id.bin");
-        let node_id_value_path = dir.join("data.bin");
+        let node_id_value_path = dir.join("node_id_data.bin");
 
         let (file_node_id, _) = FileManager::new(node_id_path)
             .expect("Failed to open the node_id");
@@ -116,7 +116,7 @@ where
     }
 
     fn resize_file_node(&mut self, offset: u64, tx: &mut WalTransaction) -> Result<(), DbError>{
-        while offset as u64 > self.file_node_id.file_len()? {
+        while offset > self.file_node_id.file_len()? {
             let next_size = self.file_node_id.check_next_size(self.file_node_id.file_len()?)?;
             tx.increase_file_size(FileId::NodeId, next_size);
             self.file_node_id.increase_file_size()?;
@@ -194,6 +194,7 @@ where
         let data_offset = self.data_eof;
 
         let key_bytes = key.as_disk_bytes();
+
         let data_len = key_bytes.len() as u64;
         let node_id = NodeId::new(data_len, data_offset);
 
@@ -258,8 +259,7 @@ where
     fn reverse_node_data(&self, id: u64) -> Option<K> {
         let offset = self.calculate_offset_from_id(id);
 
-        let bytes = self.file_node_id.reading_bytes(offset, offset + size_of::<NodeId>() as u64);
-
+        let bytes = self.file_node_id.reading_bytes(offset, offset + std::mem::size_of::<NodeId>() as u64);
         let node_id = NodeId::from_bytes(bytes);
 
         if node_id.data_len == u64::MAX{

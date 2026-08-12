@@ -295,9 +295,9 @@ where
     }
 
     fn hashed_nodes_remove(&mut self, key: &K) -> Result<Option<u64>, GraphError> {
-        Ok(self.hashed_nodes.remove(key).map_err(|e| {
+        self.hashed_nodes.remove(key).map_err(|e| {
             GraphError::Db(e)
-        })?)
+        })
     }
 
     fn reverse_hashing_get_node_data(&self, id: u64) -> Option<K> {
@@ -305,9 +305,9 @@ where
     }
 
     fn hashed_nodes_bulk_insert(&mut self, nodes: &[(K, u64)]) -> Result<(), GraphError> {
-        Ok(self.hashed_nodes.bulk_insert(nodes).map_err(|e| {
+        self.hashed_nodes.bulk_insert(nodes).map_err(|e| {
             GraphError::Db(e)
-        })?)
+        })
     }
 }
 

@@ -72,9 +72,18 @@ where
 
     fn bulk_insert(&mut self, nodes: &[(K, u64)]) -> Result<(), DbError> {
         for (data, id) in nodes{
-            self.insert(data.clone(), *id);
+            self.insert(data.clone(), *id).unwrap();
         }
         Ok(())
+    }
+}
+
+impl<K> Default for RamDictionary<K>
+where
+K: Clone + Eq + Hash + AsDiskBytes + FromDiskBytes
+{
+    fn default() -> Self {
+        Self::new()
     }
 }
 

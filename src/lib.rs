@@ -237,6 +237,7 @@ where
             None => return Err(GraphError::NodeNotFound),
         };
         let neighbours = self.adjacency_list.get_edges(&source_hashed);
+
         Ok(neighbours.map(|edge| {
             EdgeView::new(&self.adjacency_list.reverse_hashing_get_node_data(edge.get_target()).unwrap(), &edge.get_weight())
         }).collect())

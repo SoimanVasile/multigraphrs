@@ -4,7 +4,7 @@ use crate::storage::disk_storage::from_disk_bytes::{AsDiskBytes, FromDiskBytes};
 
 /// Represents an internal node ID including metadata for disk storage location and size.
 #[repr(C)]
-#[derive(Pod, Clone, Copy, Zeroable)]
+#[derive(Pod, Clone, Copy, Zeroable, Debug)]
 pub struct NodeId{
     pub(crate) data_len: u64,
     pub(crate) data_offset: u64,

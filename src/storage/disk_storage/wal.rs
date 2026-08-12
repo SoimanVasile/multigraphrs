@@ -602,9 +602,9 @@ fn rotate_wal(file_opt: &mut Option<File>, old_wal_path: &PathBuf, wal_path: &Pa
 
     (|| -> std::io::Result<()> {
         if old_wal_path.exists() {
-            std::fs::remove_file(&old_wal_path)?;
+            std::fs::remove_file(old_wal_path)?;
         }
-        std::fs::rename(&wal_path, &old_wal_path)?;
+        std::fs::rename(wal_path, old_wal_path)?;
         Ok(())
     })()?;
     
@@ -616,7 +616,7 @@ fn open_new_file(wal_path: &PathBuf) -> std::io::Result<(File, u64)> {
     let file = OpenOptions::new()
         .create(true)
         .append(true)
-        .open(&wal_path)?;
+        .open(wal_path)?;
     let metadata = file.metadata()?;
     Ok((file, metadata.len()))
 }

@@ -1,6 +1,5 @@
 use std::hash::Hash;
 
-use crate::EdgeView;
 use crate::storage::disk_storage::from_disk_bytes::FromDiskBytes;
 use crate::storage::disk_storage::from_disk_bytes::AsDiskBytes;
 use crate::core::edge::Edge;

@@ -1,4 +1,3 @@
-use crate::EdgeView;
 use crate::dictionary::dictionary_strategy::DictionaryStrategy;
 use crate::dictionary::disk_dictionary::DiskDictionary;
 use crate::storage::disk_storage::from_disk_bytes::AsDiskBytes;
@@ -6,7 +5,6 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::path::Path;
-use std::path::PathBuf;
 
 use crate::core::graph_errors::GraphError;
 use crate::core::db_error::DbError;
@@ -766,7 +764,7 @@ where
 impl<K, W> StorageBackend<K, W> for DiskStorage<K, W>
 where
     K: Clone + Eq + Hash + FromDiskBytes + AsDiskBytes,
-    W: Clone + PartialEq + FromDiskBytes + AsDiskBytes,
+    W: Clone + PartialEq + FromDiskBytes + AsDiskBytes ,
 {
     type EdgeIter<'a> = DiskEdgeIterator<'a, K, W> where Self: 'a, W: 'a;
     /// Adds a new node to the storage.
@@ -797,7 +795,8 @@ where
         self.write_superblock(&superblock, Some(&mut tx));
 
         // Commit to WAL and then flush to actual mmap
-        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        
+        self.apply_wal_transaction(&tx);
 
         Ok(new_node_id)
     }
@@ -866,6 +865,7 @@ where
         })?;
         
         let weight_data_bytes: &[u8] = edge.convert_to_bytes();
+
         self.write_weight(weight_data_bytes, &data_offset, Some(&mut tx)).map_err(|e| {
             self.poison();
             GraphError::Db(e)
@@ -1005,14 +1005,14 @@ where
         self.check_poisoned()?;
 
         let mut sorted_edges = edges.to_vec();
-        sorted_edges.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        sorted_edges.sort_unstable_by_key(|a| a.0);
         
         let mut super_block: SuperBlock = self.get_super_block();
         let mut tx = WalTransaction::new();
 
         for chunk in sorted_edges.chunk_by(|a, b| a.0 == b.0) {
             let source = chunk[0].0;
-            let mut edges_to_remove: Vec<Edge<W>> = chunk.iter().map(|&(_, ref e)| e.clone()).collect();
+            let mut edges_to_remove: Vec<Edge<W>> = chunk.iter().map(|(_, e)| e.clone()).collect();
             
             let mut disk_node = self.get_disk_node(&source);
             if disk_node.number_of_edges == 0 {
@@ -1461,9 +1461,9 @@ where
     }
 
     fn hashed_nodes_remove(&mut self, key: &K) -> Result<Option<u64>, GraphError> {
-        Ok(self.hashed_nodes.remove(key).map_err(|e| {
+        self.hashed_nodes.remove(key).map_err(|e| {
             GraphError::Db(e)
-        })?)
+        })
     }
 
     fn reverse_hashing_get_node_data(&self, id: u64) -> Option<K> {
@@ -1471,9 +1471,9 @@ where
     }
 
     fn hashed_nodes_bulk_insert(&mut self, nodes: &[(K, u64)]) -> Result<(), GraphError> {
-        Ok(self.hashed_nodes.bulk_insert(nodes).map_err(|e| {
+        self.hashed_nodes.bulk_insert(nodes).map_err(|e| {
             self.poison();
             GraphError::Db(e)
-        })?)
+        })
     }
 }
