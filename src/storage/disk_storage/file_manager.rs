@@ -1,5 +1,6 @@
 use std::hash::Hash;
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::thread;
 use std::{fs::OpenOptions, path::PathBuf};
 use memmap2::MmapMut;
 use memmap2::MmapOptions;
@@ -16,21 +17,21 @@ enum FMTypeRequest<'a>{
     Write(&'a [u8])
 }
 
-enum FMTypeResponse
-where
+enum FMTypeResponse<'a>
 {
-    Read(Vec<u8>),
+    Read(&'a [u8]),
     Write,
 }
 
-pub struct FMResponse
+pub struct FMResponse<'a>
 {
     status: Result<(), DbError>,
-    _type: FMTypeResponse
+    _type: FMTypeResponse<'a>
 }
 
-impl FMResponse{
-    fn new(_type: FMTypeResponse, status: Result<(), DbError>) -> Self{
+impl<'a> FMResponse<'a>
+{
+    fn new(_type: FMTypeResponse<'a>, status: Result<(), DbError>) -> Self{
         Self {_type, status}
     }
 }
@@ -39,23 +40,24 @@ pub struct FMRequest<'a>
     {
     _type: FMTypeRequest<'a>,
     offset: u64,
-    sender: Sender<FMResponse>
+    sender: Sender<FMResponse<'a>>
 }
 
 impl<'a> FMRequest<'a>{
-    fn new(_type: FMTypeRequest<'a>, offset: u64, sender: Sender<FMResponse>) -> Self{
+    fn new(_type: FMTypeRequest<'a>, offset: u64, sender: Sender<FMResponse<'a>>) -> Self{
         Self { _type, offset, sender }
     }
 }
 
 
 #[derive(Debug)]
-pub struct FileManager{
+pub struct FileManager<'a>{
     mmap: MmapMut,
     file: std::fs::File,
+    sender: Sender<FMRequest<'a>>,
 }
 
-impl FileManager{
+impl<'a> FileManager<'a>{
     /// Creates a new `FileManager` instance for the given file path. Creates the file if it does not exist, modifies the file length on disk if it is empty, and maps the file into memory.
     ///
     /// `file_path` is needed to specify the location of the file to open or create.
@@ -69,18 +71,25 @@ impl FileManager{
             .write(true)
             .create(true)
             .truncate(false)
-            .open(file_path)?;
+            .open(&file_path)?;
 
         if file.metadata().map(|m| m.len()).unwrap_or(0) == 0{
             file.set_len(FILE_INITIAL_SIZE)?;
             created = true
         }
+
+        let (sender, request) = channel();
+
+        thread::spawn(move || {
+            file_manager_worker_thread(file_path, request);
+        });
+
         let mmap = unsafe{
             MmapOptions::new()
                 .map_mut(&file)?
         };
 
-        Ok((Self{file, mmap}, created))
+        Ok((Self{file, mmap, sender}, created))
     }
 
     
@@ -194,4 +203,8 @@ impl FileManager{
     pub fn flush(&self) -> Result<(), DbError> {
         Ok(self.mmap.flush()?)
     }
+}
+
+fn file_manager_worker_thread(file_path: PathBuf, sender: Receiver<FMRequest>){
+
 }
