@@ -22,7 +22,7 @@ fn test_wal_crash_recovery() {
 
     // 1. Start a fresh database and add some initial data via the backend directly.
     {
-        let mut backend = DiskStorage::<u32>::new(&dir);
+        let mut backend = DiskStorage::<u32, u32>::new(&dir);
         let n1 = backend.add_node().unwrap();
         let n2 = backend.add_node().unwrap();
         let edge = Edge::new(n2, &42);
@@ -48,7 +48,7 @@ fn test_wal_crash_recovery() {
     
     // 3. Restart the database. It should ignore the corrupted WAL payload and still retain the previous data.
     {
-        let mut backend = DiskStorage::<u32>::new(&dir);
+        let mut backend = DiskStorage::<u32, u32>::new(&dir);
         
         assert_eq!(backend.edge_count(), 1);
         assert_eq!(backend.node_count(), 2);

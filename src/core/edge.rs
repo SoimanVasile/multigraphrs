@@ -1,3 +1,7 @@
+use std::hash::Hash;
+
+use crate::storage::disk_storage::from_disk_bytes::FromDiskBytes;
+use crate::storage::disk_storage::from_disk_bytes::AsDiskBytes;
 
 /// Represents a single connection between nodes in the graph.
 ///
@@ -7,7 +11,7 @@
 #[repr(C)]
 pub struct Edge<W>
 where
-    W: Clone + std::cmp::PartialEq,
+    W: Clone + std::cmp::PartialEq + AsDiskBytes + FromDiskBytes,
 {
     /// The destination node this edge points to.
     pub target: u64,
@@ -17,51 +21,35 @@ where
 
 impl<W> Edge<W>
 where
-    W: Clone + std::cmp::PartialEq,
+    W: Clone + std::cmp::PartialEq + AsDiskBytes + FromDiskBytes,
 {
-    /// Constructs a new `Edge`.
+    /// Constructs a new `Edge` connecting to `target` with the given `weight`.
     ///
-    /// # Errors
-    /// This function does not return an error.
+    /// The `target` is the node identifier, and `weight` is cloned and stored
+    /// to represent the cost or data of the connection.
     pub fn new(target: u64, weight: &W) -> Edge<W> {
         Edge { target, weight: weight.clone()}
     }
 
     /// Returns the target node identifier for this edge.
-    ///
-    /// # Returns
-    /// A **copy** of the `target` field (`u64` is `Copy`).
-    ///
-    /// # Errors
-    /// This function does not return an error.
     pub fn get_target(&self) -> u64 {
         self.target
     }
 
-    /// Returns the weight associated with this edge.
+    /// Returns a clone of the weight associated with this edge.
     ///
-    /// # Returns
-    /// A **clone** of the stored weight. The caller receives an owned copy;
-    /// mutations to it will **not** affect the original edge.
-    ///
-    /// # Errors
-    /// This function does not return an error.
+    /// Mutations to the returned weight will not affect the original edge.
     pub fn get_weight(&self) -> W{
         self.weight.clone()
     }
 
     /// Reinterprets the weight field as a raw byte slice for disk serialization.
     ///
-    /// # Returns
-    /// An **immutable reference** (`&[u8]`) into the weight's in-memory
-    /// representation. The slice is valid for the lifetime of `self`.
+    /// The returned slice is valid for the lifetime of `self`.
     ///
     /// # Safety
     /// Uses `unsafe` pointer casting internally. This is sound only when `W`
     /// is a plain-old-data type with no padding bytes that carry meaning.
-    ///
-    /// # Errors
-    /// This function does not return an error.
     pub fn convert_to_bytes(&self) -> &[u8]{
         unsafe{
         std::slice::from_raw_parts(
@@ -74,8 +62,8 @@ where
 #[derive(Clone, Debug, PartialEq)]
 pub struct EdgeView<K, W>
 where
-    K: Clone + Eq,
-    W: Clone + std::cmp::PartialEq
+    K: Clone + Hash + Eq + AsDiskBytes + FromDiskBytes,
+    W: Clone + std::cmp::PartialEq + AsDiskBytes + FromDiskBytes
 {
     target: K,
     weight: W,
@@ -83,34 +71,25 @@ where
 
 impl<K, W> EdgeView<K, W>
 where
-    W: Clone + std::cmp::PartialEq,
-    K: Eq + Clone
+    W: Clone + std::cmp::PartialEq + AsDiskBytes + FromDiskBytes,
+    K: Eq + Clone + AsDiskBytes + FromDiskBytes + Hash
 {
-    /// Constructs a new `EdgeView` by **cloning** the provided target and weight.
+    /// Constructs a new `EdgeView` by cloning the provided `target` and `weight`.
     ///
     /// The returned struct owns independent copies of both values;
-    /// mutating them will **not** affect the original graph data.
-    ///
-    /// # Errors
-    /// This function does not return an error.
+    /// mutating them will not affect the original graph data. `target` is the node key, and `weight` is the edge data.
     pub fn new(target: &K, weight: &W) -> EdgeView<K, W>{
         EdgeView { target: target.clone(), weight: weight.clone() }
     }
-    /// Returns an **immutable reference** to the target node key.
+    /// Returns an immutable reference to the target node key.
     ///
     /// The reference borrows from `self`; no clone is performed.
-    ///
-    /// # Errors
-    /// This function does not return an error.
     pub fn get_target(&self) -> &K{
         &self.target
     }
-    /// Returns an **immutable reference** to the edge weight.
+    /// Returns an immutable reference to the edge weight.
     ///
     /// The reference borrows from `self`; no clone is performed.
-    ///
-    /// # Errors
-    /// This function does not return an error.
     pub fn get_weight(&self) -> &W{
         &self.weight
     }

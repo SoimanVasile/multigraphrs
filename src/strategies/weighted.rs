@@ -1,3 +1,7 @@
+use std::hash::Hash;
+
+use crate::storage::disk_storage::from_disk_bytes::FromDiskBytes;
+use crate::storage::disk_storage::from_disk_bytes::AsDiskBytes;
 use crate::strategies::direction_strategy::DirectionStrategy;
 use crate::core::edge::Edge;
 use crate::core::graph_errors::GraphError;
@@ -14,24 +18,27 @@ use crate::storage::storage_backend::StorageBackend;
 #[derive(Debug)]
 pub struct Weighted;
 
-impl<W> DirectionStrategy<W> for Weighted
+impl<K, W> DirectionStrategy<K, W> for Weighted
 where
-    W: Clone + std::cmp::PartialEq,
+    W: Clone + std::cmp::PartialEq + AsDiskBytes + FromDiskBytes,
+    K: Clone + Eq + Hash + AsDiskBytes + FromDiskBytes,
 {
     /// Adds two edges (source -> target and target -> source) with the specified `weight`.
     ///
-    /// # Errors
-    /// Returns `GraphError::NodeNotFound` if the `source` or `target` node 
-    /// is missing from the graph's adjacency list.
+    /// - `graph`: The underlying storage backend to persist the bidirectional connection.
+    /// - `source`: The source node identifier.
+    /// - `target`: The target node identifier.
+    /// - `weight`: The weight data associated with the edge.
     ///
-    /// # Side Effects
-    /// Mutates the `graph` storage backend by adding the forward and reverse edges.
+    /// # Errors
+    /// Returns [`GraphError::NodeNotFound`] if the `source` or `target` node is missing.
     fn add_edge(
-        graph: &mut impl StorageBackend<W>,
+        graph: &mut impl StorageBackend<K, W>,
         source: u64, 
         target: u64, 
         weight: &W
-    ) -> Result<Edge<W>, GraphError> {
+    ) -> Result<Edge<W>, GraphError> 
+    {
 
         let edge = Edge::new(target, weight);
         let edge_reverse = Edge::new(source, weight);
@@ -45,12 +52,12 @@ where
 
     /// Adds multiple weighted undirected edges to the graph efficiently in bulk.
     ///
-    /// # Errors
-    /// Returns a `GraphError` if the underlying storage operations fail.
+    /// - `graph`: The underlying storage backend to persist the bulk edges.
+    /// - `hashed_nodes`: A slice of tuples containing the source, target, and weight for each edge.
     ///
-    /// # Side Effects
-    /// Mutates the `graph` storage backend to add the given weighted undirected edges in bulk.
-    fn bulk_add_edge(graph: &mut impl StorageBackend<W>, hashed_nodes: &[(u64, u64, W)]) -> Result<(), GraphError> {
+    /// # Errors
+    /// Returns a [`GraphError`] if the underlying storage operations fail.
+    fn bulk_add_edge(graph: &mut impl StorageBackend<K, W>, hashed_nodes: &[(u64, u64, W)]) -> Result<(), GraphError> {
         let mut edges: Vec<(u64, Edge<W>)> = Vec::with_capacity(hashed_nodes.len());
         let mut reverse_edges: Vec<(u64, Edge<W>)> = Vec::with_capacity(hashed_nodes.len());
 
@@ -68,7 +75,14 @@ where
         Ok(())
     }
 
-    fn bulk_remove_edge(graph: &mut impl StorageBackend<W>, edges: &[(u64, u64, W)]) -> Result<(), GraphError> {
+    /// Removes multiple weighted undirected edges from the graph efficiently in bulk.
+    ///
+    /// - `graph`: The underlying storage backend to modify.
+    /// - `edges`: A slice of tuples containing the source, target, and weight for each edge to remove.
+    ///
+    /// # Errors
+    /// Returns a [`GraphError`] if the underlying storage operations fail.
+    fn bulk_remove_edge(graph: &mut impl StorageBackend<K, W>, edges: &[(u64, u64, W)]) -> Result<(), GraphError> {
         let mut edges_to_remove: Vec<(u64, Edge<W>)> = Vec::with_capacity(edges.len() * 2);
         let mut reverse_edges_to_remove: Vec<(u64, u64)> = Vec::with_capacity(edges.len() * 2);
         
@@ -91,18 +105,17 @@ where
     ///
     /// Both the forward and reverse edges are removed.
     ///
-    /// # Returns
-    /// The removed forward `Edge` (**owned**) on success.
+    /// - `graph`: The underlying storage backend from which the edges are removed.
+    /// - `source`: The source node identifier.
+    /// - `target`: The target node identifier.
+    /// - `weight`: The edge weight to match for removal.
     ///
     /// # Errors
-    /// Returns `GraphError::EdgeDoesntExist` if no matching edge is found.
+    /// Returns [`GraphError::EdgeDoesntExist`] if no matching edge is found.
     ///
     /// # Panics
     /// Panics if `source` or `target` is out of bounds in the storage backend.
-    ///
-    /// # Side Effects
-    /// Mutates the `graph` storage backend by removing both the forward and reverse edges.
-    fn remove_edge(graph: &mut impl StorageBackend<W>, source: u64, target: u64, weight: &W) -> Result<Edge<W>, GraphError> {
+    fn remove_edge(graph: &mut impl StorageBackend<K, W>, source: u64, target: u64, weight: &W) -> Result<Edge<W>, GraphError> {
         let edge = Edge::new(target, weight);
         let reverse_edge = Edge::new(source, weight);
         graph.remove_edge(&target, &reverse_edge)?;
@@ -114,9 +127,12 @@ where
     /// Since the graph is undirected, every edge in node's outgoing list implies
     /// a reverse edge in the neighbor's list. We use this to avoid a full scan.
     ///
-    /// # Side Effects
-    /// Mutates the `graph` storage backend by clearing all incident edges and freeing the `node_id`.
-    fn remove_node(graph: &mut impl StorageBackend<W>, node_id: u64) -> Result<(), GraphError> {
+    /// - `graph`: The underlying storage backend from which the node and edges are removed.
+    /// - `node_id`: The node identifier to remove from the graph.
+    ///
+    /// # Errors
+    /// Returns a [`GraphError`] if a storage operation fails.
+    fn remove_node(graph: &mut impl StorageBackend<K, W>, node_id: u64) -> Result<(), GraphError> {
         let edges: Vec<Edge<W>> = graph.get_edges(&node_id).collect();
         for edge in edges {
             graph.remove_edge_by_target(&edge.get_target(), &node_id)?;

@@ -29,58 +29,36 @@ pub struct DiskNode{
 }
 
 impl DiskNode{
-    /// Constructs a new `DiskNode` with zero edges.
-    ///
-    /// All arguments are **copied** (`u64` is `Copy`). Pass `u64::MAX` for
+    /// Constructs a new `DiskNode` with zero edges. All arguments are **copied** (`u64` is `Copy`). Pass `u64::MAX` for
     /// the offset parameters to indicate an uninitialized node.
     ///
-    /// # Errors
-    /// This method does not return an error.
+    /// `node_idx` provides the zero-based node index needed for position calculations.
+    /// `list_edges_offset` provides the byte offset of the forward edge block in `structure.bin`.
+    /// `list_reverse_edges_offset` provides the byte offset of the reverse edge block in `reverse_structure.bin`.
     pub fn new(node_idx: u64, list_edges_offset: u64,list_reverse_edges_offset: u64) -> Self{
         Self { node_idx, list_edges_offset, number_of_edges: 0, list_reverse_edges_offset, number_of_reverse_edges: 0, capacity: DISK_NODE_INITIAL_CAPACITY, reverse_capacity: DISK_NODE_INITIAL_CAPACITY}   
     }
     /// Returns the byte offset of this node's forward edge block.
-    ///
-    /// # Returns
-    /// A **copy** of `list_edges_offset` (`u64` is `Copy`).
-    ///
-    /// # Errors
-    /// This method does not return an error.
     pub fn get_edge_offset(&self) -> u64{
         self.list_edges_offset
     }
 
     /// Returns the capacity of the forward edge block.
-    ///
-    /// # Errors
-    /// This method does not return an error.
     pub fn get_capacity(&self) -> u64{
         self.capacity
     }
 
     /// Returns the number of forward edges for this node.
-    ///
-    /// # Returns
-    /// A **copy** of `number_of_edges` (`u64` is `Copy`).
-    ///
-    /// # Errors
-    /// This method does not return an error.
     pub fn get_number_of_edges(&self) -> u64{
         self.number_of_edges
     }
 
     /// Reinterprets this `DiskNode` as a raw byte slice for disk serialization.
-    ///
-    /// # Returns
-    /// An **immutable reference** (`&[u8]`) into the struct's in-memory layout.
     /// The slice is valid for the lifetime of `self`.
     ///
     /// # Safety
     /// Uses `unsafe` pointer casting. This is sound because `DiskNode` is
     /// `#[repr(C)]` and derives `Pod`.
-    ///
-    /// # Errors
-    /// This method does not return an error.
     pub fn convert_to_bytes(&self) -> &[u8]{
         unsafe{
             std::slice::from_raw_parts(self as *const DiskNode as *const u8, std::mem::size_of::<DiskNode>())
@@ -88,17 +66,11 @@ impl DiskNode{
     }
 
     /// Verifies if the node has enough capacity to add another forward edge.
-    ///
-    /// # Errors
-    /// This method does not return an error.
     pub fn verify_enough_capacity(&self) -> bool{
         self.capacity >= (self.number_of_edges + 1) * size_of::<DiskEdge>() as u64 
     }
 
     /// Verifies if the node has enough reverse capacity to add another reverse edge.
-    ///
-    /// # Errors
-    /// This method does not return an error.
     pub fn verify_enough_reverse_capacity(&self) -> bool{
         self.reverse_capacity >= (self.number_of_reverse_edges + 1) * size_of::<u64>() as u64
     }

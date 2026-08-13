@@ -1,4 +1,8 @@
+use crate::dictionary::dictionary_strategy::DictionaryStrategy;
+use crate::dictionary::disk_dictionary::DiskDictionary;
+use crate::storage::disk_storage::from_disk_bytes::AsDiskBytes;
 use std::collections::HashMap;
+use std::hash::Hash;
 use std::marker::PhantomData;
 use std::path::Path;
 
@@ -39,6 +43,8 @@ fn allocated_disk_node(disk_node: &mut DiskNode, file_manager: &mut FileManager,
         FileId::Reverse => (&mut disk_node.list_reverse_edges_offset, disk_node.reverse_capacity),
         FileId::Node => {return Ok(());},
         FileId::Data => {return Ok(());},
+        FileId::NodeId => {return Ok(());},
+        FileId::NodeValue => {return Ok(());},
     };
     *edge_offset = {
         let mut alloc = AllocatedStruct::new(file_manager, super_block, Some(tx), file_id);
@@ -70,6 +76,8 @@ fn check_node_allocated(disk_node: &DiskNode, file_id: FileId) -> Result<bool, D
         FileId::Structure => disk_node.list_edges_offset,
         FileId::Data => return Err(DbError::InvalidFileId(3)),
         FileId::Node => return Err(DbError::InvalidFileId(2)),
+        FileId::NodeId => return Err(DbError::InvalidFileId(4)),
+        FileId::NodeValue => return Err(DbError::InvalidFileId(5)),
     };
 
     Ok(edge_offset == u64::MAX)
@@ -173,23 +181,28 @@ pub fn resizing_disk_node_reverse(file_manager: &mut FileManager, super_block: &
 }
 
 #[derive(Debug)]
-pub struct DiskStorage<W>
+pub struct DiskStorage<K, W>
 where
-    W: Clone + std::cmp::PartialEq + FromDiskBytes
+    W: Clone + std::cmp::PartialEq + FromDiskBytes + AsDiskBytes,
+    K: Clone + Eq + Hash + FromDiskBytes + AsDiskBytes,
 {
     pub(crate) file_manager_node: FileManager,
     pub(crate) file_manager_edge_structure: FileManager,
     pub(crate) file_manager_reverse_edge: FileManager,
     pub(crate) file_manager_weight_data: FileManager,
     pub(crate) wal_manager: WalManager,
+    pub(crate) hashed_nodes: DiskDictionary<K>,
+    node_count: u64,
+    edge_count: u64,
     is_poisoned: AtomicBool,
     _marker: PhantomData<W>,
 }
 
 
-impl<W> DiskStorage<W>
+impl<K, W> DiskStorage<K, W>
 where
-    W: Clone + std::cmp::PartialEq + FromDiskBytes,
+    W: Clone + std::cmp::PartialEq + FromDiskBytes + AsDiskBytes,
+    K: Clone + Eq + Hash + AsDiskBytes + FromDiskBytes,
 {
     /// Marks the database as poisoned. Once poisoned, all write operations
     /// will return `DbError::Poisoned`.
@@ -211,31 +224,20 @@ where
         }
     }
 
-    /// Allocates a new [`DiskStorage`] in the specified directory.
+    /// Initializes a new [`DiskStorage`] in the given directory.
     ///
-    /// This constructor handles the full initialization of the database storage:
-    /// 1. It creates the directory and any missing parent directories.
-    /// 2. It opens (or creates) the four required backing files: `structure.bin`, 
-    ///    `data.bin`, `node.bin`, and `reverse_structure.bin`.
-    /// 3. It initializes new files to [`FILE_INITIAL_SIZE`].
-    /// 4. It establishes memory maps for all files.
+    /// Creates the directory (and any missing parents), opens or creates the
+    /// backing files (`structure.bin`, `data.bin`, `node.bin`, `reverse_structure.bin`,
+    /// `node_id.bin`, `node_id_data.bin`), replays the WAL for crash recovery,
+    /// and starts the background WAL writer thread.
     ///
     /// # Arguments
-    /// * `directory` - The path where the storage files will be managed.
-    ///
-    /// # Side Effects
-    /// Creates directories, files, and memory maps. Replays WAL if present.
-    ///
-    /// # Errors
-    /// None (panics instead).
+    /// * `directory` — Path where the storage files will be created or opened.
     ///
     /// # Panics
-    /// This function will panic if:
-    /// * The directory cannot be created due to permission or path errors.
-    /// * Any of the required `.bin` files cannot be opened or created.
-    /// * The filesystem fails to report file metadata or set the initial file length.
-    /// * Memory mapping the files fails (e.g., out of virtual address space).
-    pub fn new<P: AsRef<Path>>(directory: P) -> DiskStorage<W>
+    /// Panics if the directory cannot be created, any backing file cannot
+    /// be opened, WAL replay fails, or the WAL background thread cannot start.
+    pub fn new<P: AsRef<Path>>(directory: P) -> DiskStorage<K, W>
     {
         let dir = directory.as_ref();
 
@@ -246,6 +248,8 @@ where
         let data_path = dir.join("data.bin");
         let node_path = dir.join("node.bin");
         let reverse_structure_path = dir.join("reverse_structure.bin");
+        let node_id_path = dir.join("node_id.bin");
+        let node_id_value_path = dir.join("node_id_data.bin");
 
         let (mut file_node, node_file_created) = FileManager::new(node_path)
             .expect("Failed to open the file_node");
@@ -255,11 +259,16 @@ where
             .expect("Failed to open the file_reverse");
         let (mut file_data, _) = FileManager::new(data_path)
             .expect("Failed to open the file_data");
+        let (mut file_node_id, _) = FileManager::new(node_id_path)
+            .expect("Failed to open the node_id");
+
+        let (mut file_node_value_id, _) = FileManager::new(node_id_value_path)
+            .expect("Failed to open the node_id_value");
 
         let mut wal_manager = WalManager::new(dir.to_path_buf())
             .expect("Failed to initialize WalManager");
             
-        wal_manager.replay(&mut file_node, &mut file_structure, &mut file_reverse, &mut file_data)
+        wal_manager.replay(&mut file_node, &mut file_structure, &mut file_reverse, &mut file_data, &mut file_node_id, &mut file_node_value_id)
             .expect("Failed to replay WAL transactions on startup");
 
         wal_manager.start(WAL_BIN_MAX_FILE_SIZE)
@@ -271,13 +280,24 @@ where
             file_node.writing_bytes_to_mmap(0, SUPER_BLOCK_SIZE as u64, bytes_superblock);
         }
 
+
+        let super_block_bytes = file_node.reading_bytes(0, 1024);
+        let super_block: SuperBlock = *bytemuck::from_bytes(super_block_bytes)  ;
+
+        let node_count = super_block.node_count;
+        let edge_count = super_block.edge_count;
+        let dictionary = DiskDictionary::new::<K, &Path>(dir, &wal_manager);
+
         DiskStorage {
             file_manager_node: file_node,
             file_manager_edge_structure: file_structure,
             file_manager_reverse_edge: file_reverse,
             file_manager_weight_data: file_data,
+            node_count,
+            edge_count,
             wal_manager,
             is_poisoned: AtomicBool::new(false),
+            hashed_nodes: dictionary,
             _marker: PhantomData::<W>
         }
     }
@@ -343,47 +363,36 @@ where
         *super_block
     }
 
-    /// Calculates the absolute byte offset of a [`DiskNode`] within the node storage file
+    /// Calculates the absolute byte offset of a [`DiskNode`] within the node storage file.
     ///
-    /// The `node.bin` file follow a linear layout where the [SuperBlock] resides at the head of the
-    /// file, follow by a contigous, fixed size [`DiskNode`] records
+    /// The `node.bin` file follows a linear layout: a [`SuperBlock`] at the head,
+    /// followed by contiguous, fixed-size [`DiskNode`] records.
     ///
-    /// The offset is calculated:
-    /// $$offset = SUPER\_BLOCK\_SIZE + (node\_id \times size\_of::<DiskNode>())$$
+    /// The offset is: `SUPER_BLOCK_SIZE + (node_id * size_of::<DiskNode>())`
     ///
     /// # Arguments
-    /// * `node_id` - the zero-based index of the node to locate
-    ///
-    /// # Return
-    /// * The node offset from the start of the memory map where the node's data begins
-    ///
-    /// # Errors
-    /// None.
-    ///
+    /// * `node_id` — Zero-based index of the node to locate.
     pub fn calculate_node_offset(&self, node_id: &u64) -> u64{
         SUPER_BLOCK_SIZE as u64 + (node_id * std::mem::size_of::<DiskNode>() as u64)
     }
 
-    /// Persists a [`DiskNode`] to its indexed position withing the `node.bin` file.
+    /// Persists a [`DiskNode`] to its indexed position within `node.bin`.
     ///
-    /// This function uses the [`node_idx`] within provided [`DiskNode`] to determine the write
-    /// destination via [`Self::calculate_node_offset`]
-    /// 
-    /// Note that this function writes to the memory-mapped region. The data will be synced to the
-    /// physical disk by the Operating System asynchronously unless an explicit flush is triggered
+    /// Uses the node's `node_idx` field to compute the write offset via
+    /// [`calculate_node_offset`](Self::calculate_node_offset). The data is
+    /// written to the memory-mapped region and synced to disk asynchronously
+    /// by the OS unless explicitly flushed.
     ///
     /// # Arguments
-    /// * `disk_node` - the node record to be serialized and written
-    ///
-    /// # Side Effects
-    /// Writes the node data to the memory map or WAL transaction. May increase file size.
+    /// * `disk_node` — The node record to serialize and write.
+    /// * `tx` — Optional WAL transaction; if `Some`, writes are recorded in the
+    ///   transaction instead of going directly to the mmap.
     ///
     /// # Errors
-    /// Returns `std::io::Error` if file size cannot be increased.
+    /// Returns [`DbError`] if the backing file cannot be grown.
     ///
     /// # Panics
-    /// Panics if the calculated offset or node size exceeds the current bounds of the memory map.
-    /// See [`writing_bytes_to_mmap`]
+    /// Panics if the computed offset exceeds the memory map bounds.
     pub fn write_disk_node(&mut self, disk_node: &DiskNode, mut tx: Option<&mut WalTransaction>) -> Result<(), DbError>{
         let offset = self.calculate_node_offset(&disk_node.node_idx);
         let bytes = disk_node.convert_to_bytes();
@@ -399,23 +408,17 @@ where
         Ok(())
     }
 
-    /// Loads a copy of [`DiskNode`] with the [`node_idx`] equal to `source`
+    /// Loads a copy of the [`DiskNode`] at the given index.
     ///
-    /// This function uses the index to determine the read destination via
-    /// [`Self::calculate_node_offset`]
-    ///
-    /// **Important** that this function only gets a copy from the memory-mapped, so the changed made to the
-    /// returned [`DiskNode`] will not be seen in the file, until a write has been made
+    /// The returned struct is an independent copy — modifications to it
+    /// are not reflected on disk until [`write_disk_node`](Self::write_disk_node)
+    /// is called.
     ///
     /// # Arguments
-    /// * `source` - The unique identifier (index) of the node to retrieve
-    /// 
-    /// # Errors
-    /// None.
+    /// * `source` — Zero-based node index.
     ///
     /// # Panics
-    /// Panics if the calculated offset or node size exceeds the current bounds of the memory map.
-    /// (e.g. `source` is out of bounds)
+    /// Panics if `source` points beyond the memory map bounds.
     pub fn get_disk_node(&self, source: &u64) -> DiskNode{
         let offset = self.calculate_node_offset(source);
 
@@ -572,6 +575,7 @@ where
             }
 
             super_block.edge_count -= disk_node.number_of_edges;
+            self.edge_count -= disk_node.number_of_edges;
             
             {
                 let mut alloc = AllocatedStruct::new(&mut self.file_manager_edge_structure, &mut super_block, tx.as_deref_mut(), FileId::Structure);
@@ -654,6 +658,7 @@ where
 
         disk_node.number_of_edges -= 1;
         super_block.edge_count -=1;
+        self.edge_count -= 1;
         self.write_disk_node(disk_node, tx)?;
         Ok(())
     }
@@ -700,6 +705,7 @@ where
                         FileId::Structure => &mut self.file_manager_edge_structure,
                         FileId::Reverse => &mut self.file_manager_reverse_edge,
                         FileId::Data => &mut self.file_manager_weight_data,
+                        _ => continue,
                     };
                     fm.writing_bytes_to_mmap(*offset, *offset + bytes.len() as u64, bytes);
                 }
@@ -709,6 +715,7 @@ where
                         FileId::Structure => &mut self.file_manager_edge_structure,
                         FileId::Reverse => &mut self.file_manager_reverse_edge,
                         FileId::Data => &mut self.file_manager_weight_data,
+                        _ => continue,
                     };
                     fm.zeroing_mmap(*offset, *end);
                 }
@@ -718,6 +725,7 @@ where
                         FileId::Structure => &mut self.file_manager_edge_structure,
                         FileId::Reverse => &mut self.file_manager_reverse_edge,
                         FileId::Data => &mut self.file_manager_weight_data,
+                        _ => continue,
                     };
                     fm.copy_within(*src_start, *src_end, *dest_start);
                 }
@@ -753,11 +761,12 @@ where
     }
 }
 
-impl<W> StorageBackend<W> for DiskStorage<W>
+impl<K, W> StorageBackend<K, W> for DiskStorage<K, W>
 where
-    W: Clone + PartialEq + FromDiskBytes
+    K: Clone + Eq + Hash + FromDiskBytes + AsDiskBytes,
+    W: Clone + PartialEq + FromDiskBytes + AsDiskBytes ,
 {
-    type EdgeIter<'a> = DiskEdgeIterator<'a, W> where Self: 'a, W: 'a;
+    type EdgeIter<'a> = DiskEdgeIterator<'a, K, W> where Self: 'a, W: 'a;
     /// Adds a new node to the storage.
     ///
     /// # Side Effects
@@ -775,6 +784,7 @@ where
         let mut superblock: SuperBlock = self.get_super_block();
 
         let new_node_id = self.next_node_id(&mut superblock);
+        self.node_count = superblock.node_count;
         let disk_node: DiskNode = DiskNode::new(new_node_id, u64::MAX, u64::MAX);
         
         self.write_disk_node(&disk_node, Some(&mut tx))
@@ -785,7 +795,8 @@ where
         self.write_superblock(&superblock, Some(&mut tx));
 
         // Commit to WAL and then flush to actual mmap
-        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        
+        self.apply_wal_transaction(&tx);
 
         Ok(new_node_id)
     }
@@ -809,6 +820,7 @@ where
         let mut new_ids: Vec<u64> = Vec::with_capacity(*number_of_nodes as usize);
         for i in 0..*number_of_nodes{
             let id = self.next_node_id(&mut super_block);
+            self.node_count = super_block.node_count;
             new_ids.push(id);
             let disk_node: DiskNode = DiskNode::new(new_ids[i as usize], u64::MAX, u64::MAX);
             self.write_disk_node(&disk_node, Some(&mut tx)).map_err(|e| {
@@ -819,7 +831,8 @@ where
 
         self.write_superblock(&super_block, Some(&mut tx));
 
-        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
+        self.apply_wal_transaction(&tx);
         Ok(new_ids)
     }
 
@@ -852,6 +865,7 @@ where
         })?;
         
         let weight_data_bytes: &[u8] = edge.convert_to_bytes();
+
         self.write_weight(weight_data_bytes, &data_offset, Some(&mut tx)).map_err(|e| {
             self.poison();
             GraphError::Db(e)
@@ -859,10 +873,12 @@ where
 
         superblock.next_data_free_block += weight_data_bytes.len() as u64;
         superblock.edge_count += 1;
+        self.edge_count += 1;
         
         self.write_superblock(&superblock, Some(&mut tx));
 
-        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
+        self.apply_wal_transaction(&tx);
         Ok(())
     }
 
@@ -906,6 +922,7 @@ where
 
             super_block.next_data_free_block += weight_data_bytes.len() as u64;
             super_block.edge_count += 1;
+            self.edge_count += 1;
             
             // Update the cached disk node so subsequent edges use the correct edge count!
             seen_disk_node.insert(*node, disk_node);
@@ -939,7 +956,7 @@ where
     ///
     /// # Panics
     /// Panics if the node does not exist or read goes out of bounds.
-    fn get_edges<'a>(&'a self, node: &u64) -> Self::EdgeIter<'a> where W: 'a {
+    fn get_edges<'a>(&'a self, node: &u64) -> Self::EdgeIter<'a> where W: 'a, K: 'a{
         let disk_node: DiskNode = self.get_disk_node(node);
         DiskEdgeIterator::new(self, &disk_node.get_edge_offset(), &disk_node.get_number_of_edges())
     }
@@ -980,33 +997,72 @@ where
     /// Removes the edges in the `edges` array which the target and weight match
     ///
     /// # Arguments
-    /// * `edges` - an array with the strucutre [(source, target, weight)]
+    /// * `edges` - an array with the strucutre [(source, `Edge`)]
     ///
     /// # Panics
     /// Panics if `source` is out of bounds
     fn bulk_remove_edge(&mut self, edges: &[(u64, Edge<W>)]) -> Result<(), GraphError> {
         self.check_poisoned()?;
-        let mut seen_disk_node: HashMap<u64, DiskNode> = HashMap::with_capacity(edges.len()/2);
+
+        let mut sorted_edges = edges.to_vec();
+        sorted_edges.sort_unstable_by_key(|a| a.0);
+        
         let mut super_block: SuperBlock = self.get_super_block();
         let mut tx = WalTransaction::new();
 
-        for (source, edge) in edges{
-            let edges = self.get_edges(source);
+        for chunk in sorted_edges.chunk_by(|a, b| a.0 == b.0) {
+            let source = chunk[0].0;
+            let mut edges_to_remove: Vec<Edge<W>> = chunk.iter().map(|(_, e)| e.clone()).collect();
+            
+            let mut disk_node = self.get_disk_node(&source);
+            if disk_node.number_of_edges == 0 {
+                continue;
+            }
 
-            if let Some((index, _)) = edges.enumerate().find(|(_, e)| e.get_target() == edge.get_target() && e.get_weight() == edge.get_weight()){
-                let mut disk_node = *seen_disk_node
-                    .entry(*source)
-                    .or_insert_with(|| self.get_disk_node(source));                
-                self.swap_remove_disk_edge(&mut disk_node, &(index as u64),&mut super_block, Some(&mut tx))
-                    .map_err(|e| {
-                        self.poison();
-                        GraphError::Db(e)
-                    })?;
-                seen_disk_node.insert(*source, disk_node);
+            let start_offset = disk_node.list_edges_offset;
+            let total_bytes = disk_node.number_of_edges * std::mem::size_of::<DiskEdge>() as u64;
+            let all_edges_bytes = self.file_manager_edge_structure.reading_bytes(start_offset, start_offset + total_bytes);
+            let mut disk_edges: Vec<DiskEdge> = bytemuck::cast_slice(all_edges_bytes).to_vec();
+            
+            let mut indices_to_remove = Vec::new();
+
+            for (i, disk_edge) in disk_edges.iter().enumerate() {
+                let weight_bytes = self.file_manager_weight_data.reading_bytes(disk_edge.weight_offset, disk_edge.weight_offset + disk_edge.weight_len);
+                let weight = W::from_bytes(weight_bytes);
+                
+                if let Some(pos) = edges_to_remove.iter().position(|e| e.get_target() == disk_edge.node && e.get_weight() == weight) {
+                    indices_to_remove.push(i);
+                    edges_to_remove.swap_remove(pos);
+                }
+                if edges_to_remove.is_empty() {
+                    break;
+                }
+            }
+
+            if !indices_to_remove.is_empty() {
+                indices_to_remove.sort_unstable_by(|a, b| b.cmp(a));
+                for idx in indices_to_remove.iter() {
+                    disk_edges.swap_remove(*idx);
+                }
+
+                let removed_count = indices_to_remove.len() as u64;
+                if !disk_edges.is_empty() {
+                    let new_bytes = bytemuck::cast_slice(&disk_edges);
+                    tx.write_bytes(FileId::Structure, start_offset, new_bytes);
+                }
+                
+                let zero_start = start_offset + disk_edges.len() as u64 * std::mem::size_of::<DiskEdge>() as u64;
+                tx.zero_mmap(FileId::Structure, zero_start, start_offset + total_bytes);
+
+                disk_node.number_of_edges -= removed_count;
+                super_block.edge_count -= removed_count;
+                self.write_disk_node(&disk_node, Some(&mut tx)).map_err(|e| { self.poison(); GraphError::Db(e) })?;
             }
         }
+        
         self.write_superblock(&super_block, Some(&mut tx));
-        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
+        self.apply_wal_transaction(&tx);
         Ok(())
     }
 
@@ -1067,8 +1123,7 @@ where
     /// None.
     ///
     fn node_count(&self) -> usize {
-        let superblock = self.get_super_block();
-        superblock.node_count as usize
+        self.node_count as usize
     }
 
     /// Returns the global count of edges.
@@ -1077,8 +1132,7 @@ where
     /// None.
     ///
     fn edge_count(&self) -> usize {
-        let superblock = self.get_super_block();
-        superblock.edge_count as usize
+        self.edge_count as usize
     }
 
     /// Increments the node counter manually.
@@ -1096,6 +1150,7 @@ where
         let mut tx = WalTransaction::new();
         let mut super_block = self.get_super_block();
         super_block.increment_node_counter();
+        self.node_count = super_block.node_count;
         self.write_superblock(&super_block, Some(&mut tx));
         self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
         Ok(())
@@ -1202,8 +1257,8 @@ where
 
         for (source, target, _) in edges{
             let mut disk_node = *seen_disk_node
-                .entry(*source)
-                .or_insert_with(|| self.get_disk_node(source));
+                .entry(*target)
+                .or_insert_with(|| self.get_disk_node(target));
             if check_node_allocated(&disk_node, FileId::Reverse).map_err(|e| { self.poison(); GraphError::from(e) })? {
                 allocated_disk_node(&mut disk_node, &mut self.file_manager_reverse_edge, FileId::Reverse, &mut super_block, &mut tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
             }
@@ -1310,28 +1365,22 @@ where
 
         for chunk in sorted_edges.chunk_by(|a, b| a.0 == b.0) {
             let source = chunk[0].0;
-            
-            // Extract just the origins we want to remove for this source
             let mut origins_to_remove: Vec<u64> = chunk.iter().map(|&(_, o)| o).collect();
-            let mut indices_to_remove = Vec::new();
             
             let mut disk_node = self.get_disk_node(&source);
+            if disk_node.number_of_reverse_edges == 0 {
+                continue;
+            }
             
-            let total_bytes = disk_node.number_of_reverse_edges * size_of::<u64>() as u64;
             let start_offset = disk_node.list_reverse_edges_offset;
+            let total_bytes = disk_node.number_of_reverse_edges * std::mem::size_of::<u64>() as u64;
+            let all_edges_bytes = self.file_manager_reverse_edge.reading_bytes(start_offset, start_offset + total_bytes);
+            let mut reverse_edges: Vec<u64> = bytemuck::cast_slice(all_edges_bytes).to_vec();
             
-            let all_edges_bytes = self.file_manager_reverse_edge
-                .reading_bytes(start_offset, start_offset + total_bytes);
+            let mut indices_to_remove = Vec::new();
 
-            for i in 0..disk_node.number_of_reverse_edges {
-                let byte_start = (i * size_of::<u64>() as u64) as usize;
-                let byte_end = byte_start + size_of::<u64>();
-                
-                let current_origin = u64::from_le_bytes(
-                    all_edges_bytes[byte_start..byte_end].try_into().unwrap()
-                );
-
-                if let Some(pos) = origins_to_remove.iter().position(|r| *r == current_origin) {
+            for (i, current_origin) in reverse_edges.iter().enumerate() {
+                if let Some(pos) = origins_to_remove.iter().position(|r| r == current_origin) {
                     indices_to_remove.push(i);
                     origins_to_remove.swap_remove(pos);
                 }
@@ -1340,18 +1389,28 @@ where
                 }
             }
 
-            indices_to_remove.sort_unstable_by(|a, b| b.cmp(a));
+            if !indices_to_remove.is_empty() {
+                indices_to_remove.sort_unstable_by(|a, b| b.cmp(a));
+                for idx in indices_to_remove.iter() {
+                    reverse_edges.swap_remove(*idx);
+                }
 
-            for index in indices_to_remove {
-                self.swap_remove_disk_reverse_edge(&mut disk_node, &index, Some(&mut tx))
-                    .map_err(|e|{
-                        self.poison();
-                        GraphError::Db(e)
-                    })?;
+                let removed_count = indices_to_remove.len() as u64;
+                if !reverse_edges.is_empty() {
+                    let new_bytes = bytemuck::cast_slice(&reverse_edges);
+                    tx.write_bytes(FileId::Reverse, start_offset, new_bytes);
+                }
+                
+                let zero_start = start_offset + reverse_edges.len() as u64 * std::mem::size_of::<u64>() as u64;
+                tx.zero_mmap(FileId::Reverse, zero_start, start_offset + total_bytes);
+
+                disk_node.number_of_reverse_edges -= removed_count;
+                self.write_disk_node(&disk_node, Some(&mut tx)).map_err(|e| { self.poison(); GraphError::Db(e) })?;
             }
         }
 
-        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
+        self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;
+        self.apply_wal_transaction(&tx);
         Ok(())
     }
 
@@ -1379,9 +1438,42 @@ where
 
         superblock.change_header(node_id);
         superblock.node_count -= 1;
+        self.node_count -= 1;
         self.write_superblock(&superblock, Some(&mut tx));
         
         self.commit_and_flush(&tx).map_err(|e| { self.poison(); GraphError::from(e) })?;        self.apply_wal_transaction(&tx);
         Ok(())
+    }
+
+    fn hashed_nodes_contains_key(&self, key: &K) -> Result<bool, GraphError> {
+        Ok(self.hashed_nodes.contains_key(key))
+    }
+
+    fn hashed_nodes_insert(&mut self, key: K, node_id: u64) -> Result<(), GraphError> {
+        self.hashed_nodes.insert(key, node_id).map_err(|e| {
+            GraphError::Db(e)
+        })?;
+        Ok(())
+    }
+
+    fn hashed_nodes_get(&self,  key: &K) -> Result<Option<u64>, GraphError> {
+        Ok(self.hashed_nodes.get(key))
+    }
+
+    fn hashed_nodes_remove(&mut self, key: &K) -> Result<Option<u64>, GraphError> {
+        self.hashed_nodes.remove(key).map_err(|e| {
+            GraphError::Db(e)
+        })
+    }
+
+    fn reverse_hashing_get_node_data(&self, id: u64) -> Option<K> {
+        self.hashed_nodes.reverse_node_data(id)
+    }
+
+    fn hashed_nodes_bulk_insert(&mut self, nodes: &[(K, u64)]) -> Result<(), GraphError> {
+        self.hashed_nodes.bulk_insert(nodes).map_err(|e| {
+            self.poison();
+            GraphError::Db(e)
+        })
     }
 }

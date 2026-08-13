@@ -11,17 +11,17 @@ fn next_test_id() -> usize {
 
 struct TempGraph<S, W>
 where
-    W: Clone + std::cmp::PartialEq + multigraphrs::storage::disk_storage::from_disk_bytes::FromDiskBytes,
-    S: multigraphrs::DirectionStrategy<W>,
+    W: Clone + std::cmp::PartialEq + multigraphrs::storage::disk_storage::from_disk_bytes::FromDiskBytes + multigraphrs::storage::disk_storage::from_disk_bytes::AsDiskBytes,
+    S: multigraphrs::DirectionStrategy<u32, W>,
 {
-    pub graph: MultiGraph<u32, W, S, DiskStorage<W>>,
+    pub graph: MultiGraph<u32, W, S, DiskStorage<u32, W>>,
     dir: std::path::PathBuf,
 }
 
 impl<S, W> TempGraph<S, W>
 where
-    W: Clone + std::cmp::PartialEq + multigraphrs::storage::disk_storage::from_disk_bytes::FromDiskBytes,
-    S: multigraphrs::DirectionStrategy<W>,
+    W: Clone + std::cmp::PartialEq + multigraphrs::storage::disk_storage::from_disk_bytes::FromDiskBytes + multigraphrs::storage::disk_storage::from_disk_bytes::AsDiskBytes,
+    S: multigraphrs::DirectionStrategy<u32, W>,
 {
     fn new(test_name: &str) -> Self {
         let id = next_test_id();
@@ -30,7 +30,7 @@ where
         let _ = fs::remove_dir_all(&dir); // Clean up if exists from previous run
         fs::create_dir_all(&dir).unwrap();
 
-        let backend = DiskStorage::<W>::new(&dir);
+        let backend = DiskStorage::<u32, W>::new(&dir);
         let graph = MultiGraph::with_backend(backend);
 
         Self { graph, dir }
@@ -39,8 +39,8 @@ where
 
 impl<S, W> Drop for TempGraph<S, W>
 where
-    W: Clone + std::cmp::PartialEq + multigraphrs::storage::disk_storage::from_disk_bytes::FromDiskBytes,
-    S: multigraphrs::DirectionStrategy<W>,
+    W: Clone + std::cmp::PartialEq + multigraphrs::storage::disk_storage::from_disk_bytes::FromDiskBytes + multigraphrs::storage::disk_storage::from_disk_bytes::AsDiskBytes,
+    S: multigraphrs::DirectionStrategy<u32, W>,
 {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.dir);
@@ -285,7 +285,7 @@ fn test_end_to_end_weighted_undirected_user_workflow() {
     // Remove a node and verify cleanup
     temp.graph.remove_node(&3).unwrap();
     assert_eq!(temp.graph.degree(&1).unwrap(), 57);
-    assert!(!temp.graph.contains_node(&3));
+    assert!(!temp.graph.contains_node(&3).unwrap());
 }
 
 #[test]
@@ -337,8 +337,8 @@ fn test_disk_directed_node_id_reuse() {
 
     // Edge to old node 2 should be gone, add edge to new node 4
     temp.graph.add_edge(1, 4).unwrap();
-    assert!(temp.graph.contains_edge(&1, &4));
-    assert!(!temp.graph.contains_node(&2));
+    assert!(temp.graph.contains_edge(&1, &4).unwrap());
+    assert!(!temp.graph.contains_node(&2).unwrap());
     // degree of 1: edge to 3 (survived) + edge to 4 (new) = 2
     assert_eq!(temp.graph.degree(&1).unwrap(), 2);
 }
@@ -377,14 +377,14 @@ fn test_disk_directed_multiple_reuse_cycles() {
     temp.graph.add_edge(300, 8).unwrap();
 
     // Verify new edges work
-    assert!(temp.graph.contains_edge(&2, &100));
-    assert!(temp.graph.contains_edge(&100, &4));
-    assert!(temp.graph.contains_edge(&300, &8));
+    assert!(temp.graph.contains_edge(&2, &100).unwrap());
+    assert!(temp.graph.contains_edge(&100, &4).unwrap());
+    assert!(temp.graph.contains_edge(&300, &8).unwrap());
 
     // Verify old nodes are gone
-    assert!(!temp.graph.contains_node(&3));
-    assert!(!temp.graph.contains_node(&5));
-    assert!(!temp.graph.contains_node(&7));
+    assert!(!temp.graph.contains_node(&3).unwrap());
+    assert!(!temp.graph.contains_node(&5).unwrap());
+    assert!(!temp.graph.contains_node(&7).unwrap());
 }
 
 #[test]
@@ -416,8 +416,8 @@ fn test_disk_remove_all_nodes_then_rebuild() {
 
     assert_eq!(temp.graph.node_count(), 5);
     assert_eq!(temp.graph.edge_count(), 4);
-    assert!(temp.graph.contains_edge(&100, &101));
-    assert!(temp.graph.contains_edge(&103, &104));
+    assert!(temp.graph.contains_edge(&100, &101).unwrap());
+    assert!(temp.graph.contains_edge(&103, &104).unwrap());
 }
 
 #[test]
@@ -442,9 +442,9 @@ fn test_disk_undirected_node_id_reuse() {
 
     assert_eq!(temp.graph.degree(&1).unwrap(), 1);
     assert_eq!(temp.graph.degree(&4).unwrap(), 1);
-    assert!(temp.graph.contains_edge(&1, &4));
-    assert!(temp.graph.contains_edge(&4, &1));
-    assert!(!temp.graph.contains_node(&2));
+    assert!(temp.graph.contains_edge(&1, &4).unwrap());
+    assert!(temp.graph.contains_edge(&4, &1).unwrap());
+    assert!(!temp.graph.contains_node(&2).unwrap());
 }
 
 #[test]

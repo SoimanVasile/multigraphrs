@@ -1,124 +1,123 @@
 use std::{fs, path::PathBuf};
 
-use multigraphrs::{Directed, DiskMultiGraph, DiskStorage, GraphError, MultiGraph, Undirected, Weighted, WeightedDirected};
+use multigraphrs::{Directed, DiskMultiGraph, DiskStorage, GraphError, MultiGraph, RamMultiGraph, Undirected, Weighted, WeightedDirected};
 
 #[test]
 fn test_remove_node_directed() {
-    let mut graph = MultiGraph::<&str, u32, Directed>::new();
+    let mut graph = RamMultiGraph::<String, u32, Directed>::new();
 
-    graph.add_node("A").unwrap();
-    graph.add_node("B").unwrap();
-    graph.add_node("C").unwrap();
+    graph.add_node("A".into()).unwrap();
+    graph.add_node("B".into()).unwrap();
+    graph.add_node("C".into()).unwrap();
 
     assert!(graph.node_count() == 3);
     // A -> B
     // A -> C
     // C -> B
-    graph.add_edge("A", "B").unwrap();
-    graph.add_edge("A", "C").unwrap();
-    graph.add_edge("C", "B").unwrap();
+    graph.add_edge("A".into(), "B".into()).unwrap();
+    graph.add_edge("A".into(), "C".into()).unwrap();
+    graph.add_edge("C".into(), "B".into()).unwrap();
 
-    assert_eq!(graph.degree(&"A").unwrap(), 2);
-    assert_eq!(graph.degree(&"C").unwrap(), 1);
+    assert_eq!(graph.degree(&"A".into()).unwrap(), 2);
+    assert_eq!(graph.degree(&"C".into()).unwrap(), 1);
 
     // Remove B
-    let removed = graph.remove_node(&"B").unwrap();
-    assert_eq!(removed, "B");
+    graph.remove_node(&"B".into()).unwrap();
     assert_eq!(graph.node_count(), 2);
 
     // The edges A -> B and C -> B should be removed
     // So degree of A should be 1 (A -> C), and C should be 0.
-    assert_eq!(graph.degree(&"A").unwrap(), 1);
-    assert_eq!(graph.degree(&"C").unwrap(), 0);
+    assert_eq!(graph.degree(&"A".into()).unwrap(), 1);
+    assert_eq!(graph.degree(&"C".into()).unwrap(), 0);
 
     // Trying to get degree of B should return an error
-    assert!(graph.degree(&"B").is_err());
+    assert!(graph.degree(&"B".into()).is_err());
 }
 
 #[test]
 fn test_remove_node_undirected() {
-    let mut graph = MultiGraph::<&str, u32, Undirected>::new();
+    let mut graph = RamMultiGraph::<String, u32, Undirected>::new();
 
-    graph.add_node("X").unwrap();
-    graph.add_node("Y").unwrap();
+    graph.add_node("X".into()).unwrap();
+    graph.add_node("Y".into()).unwrap();
     
     // X <-> Y
-    graph.add_edge("X", "Y").unwrap();
+    graph.add_edge("X".into(), "Y".into()).unwrap();
     
-    assert_eq!(graph.degree(&"X").unwrap(), 1);
-    assert_eq!(graph.degree(&"Y").unwrap(), 1);
+    assert_eq!(graph.degree(&"X".into()).unwrap(), 1);
+    assert_eq!(graph.degree(&"Y".into()).unwrap(), 1);
     
-    graph.remove_node(&"Y").unwrap();
+    graph.remove_node(&"Y".into()).unwrap();
     
     // Y is gone, X has no edges left
-    assert_eq!(graph.degree(&"X").unwrap(), 0);
-    assert!(graph.degree(&"Y").is_err());
+    assert_eq!(graph.degree(&"X".into()).unwrap(), 0);
+    assert!(graph.degree(&"Y".into()).is_err());
 }
 
 #[test]
 fn test_remove_node_weighted() {
-    let mut graph = MultiGraph::<&str, f64, Weighted>::new();
+    let mut graph = RamMultiGraph::<String, f64, Weighted>::new();
     
-    graph.add_node("N1").unwrap();
-    graph.add_node("N2").unwrap();
+    graph.add_node("N1".into()).unwrap();
+    graph.add_node("N2".into()).unwrap();
     
-    graph.add_edge("N1", "N2", 5.5).unwrap();
+    graph.add_edge("N1".into(), "N2".into(), 5.5).unwrap();
     
-    assert_eq!(graph.degree(&"N1").unwrap(), 1);
+    assert_eq!(graph.degree(&"N1".into()).unwrap(), 1);
     
-    graph.remove_node(&"N2").unwrap();
-    assert_eq!(graph.degree(&"N1").unwrap(), 0);
+    graph.remove_node(&"N2".into()).unwrap();
+    assert_eq!(graph.degree(&"N1".into()).unwrap(), 0);
 }
 
 #[test]
 fn test_remove_node_weighted_directed() {
-    let mut graph = MultiGraph::<&str, f64, WeightedDirected>::new();
+    let mut graph = RamMultiGraph::<String, f64, WeightedDirected>::new();
     
-    graph.add_node("Source").unwrap();
-    graph.add_node("Dest").unwrap();
+    graph.add_node("Source".into()).unwrap();
+    graph.add_node("Dest".into()).unwrap();
     
-    graph.add_edge("Source", "Dest", 10.0).unwrap();
+    graph.add_edge("Source".into(), "Dest".into(), 10.0).unwrap();
     
-    assert_eq!(graph.degree(&"Source").unwrap(), 1);
+    assert_eq!(graph.degree(&"Source".into()).unwrap(), 1);
     
-    graph.remove_node(&"Dest").unwrap();
-    assert_eq!(graph.degree(&"Source").unwrap(), 0);
+    graph.remove_node(&"Dest".into()).unwrap();
+    assert_eq!(graph.degree(&"Source".into()).unwrap(), 0);
 }
 
 // --- Error path tests ---
 
 #[test]
 fn remove_nonexistent_node_directed() {
-    let mut graph = MultiGraph::<u32, u32, Directed>::new();
+    let mut graph = RamMultiGraph::<u32, u32, Directed>::new();
     assert_eq!(graph.remove_node(&999), Err(GraphError::NodeNotFound));
 }
 
 #[test]
 fn remove_nonexistent_node_undirected() {
-    let mut graph = MultiGraph::<u32, u32, Undirected>::new();
+    let mut graph = RamMultiGraph::<u32, u32, Undirected>::new();
     assert_eq!(graph.remove_node(&42), Err(GraphError::NodeNotFound));
 }
 
 #[test]
 fn remove_nonexistent_node_weighted() {
-    let mut graph = MultiGraph::<u32, f64, Weighted>::new();
+    let mut graph = RamMultiGraph::<u32, f64, Weighted>::new();
     assert_eq!(graph.remove_node(&1), Err(GraphError::NodeNotFound));
 }
 
 #[test]
 fn remove_nonexistent_node_weighted_directed() {
-    let mut graph = MultiGraph::<u32, f64, WeightedDirected>::new();
+    let mut graph = RamMultiGraph::<u32, f64, WeightedDirected>::new();
     assert_eq!(graph.remove_node(&0), Err(GraphError::NodeNotFound));
 }
 
 #[test]
 fn remove_same_node_twice_returns_error() {
-    let mut graph = MultiGraph::<&str, u32, Directed>::new();
-    graph.add_node("A").unwrap();
+    let mut graph = RamMultiGraph::<String, u32, Directed>::new();
+    graph.add_node("A".into()).unwrap();
 
-    assert_eq!(graph.remove_node(&"A"), Ok("A"));
+    assert_eq!(graph.remove_node(&"A".into()), Ok(()));
     // Second removal should fail
-    assert_eq!(graph.remove_node(&"A"), Err(GraphError::NodeNotFound));
+    assert_eq!(graph.remove_node(&"A".into()), Err(GraphError::NodeNotFound));
 }
 
 #[test]
@@ -128,7 +127,7 @@ fn remove_node_in_disk(){
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
 
-    let backend = DiskStorage::<u32>::new(&dir);
+    let backend = DiskStorage::<u32, u32>::new(&dir);
     let mut graph: DiskMultiGraph<u32, u32, Undirected> = MultiGraph::with_backend(backend);
 
     graph.add_node(1).unwrap();

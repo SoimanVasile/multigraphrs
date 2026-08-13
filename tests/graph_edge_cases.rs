@@ -3,7 +3,7 @@ use multigraphrs::Directed;
 #[test]
 fn test_multigraph_with_capacity() {
     // We just want to make sure it doesn't panic and allocates internally correctly.
-    let mut graph = multigraphrs::RamMultiGraph::<u32, u32, Directed>::with_capacity(1000, multigraphrs::storage::adjacency_list::RamStorage::new());
+    let mut graph = multigraphrs::RamMultiGraph::<u32, u32, Directed>::with_backend(multigraphrs::storage::adjacency_list::RamStorage::new());
     
     // Add nodes to test functionality works seamlessly with preallocated capacity
     for i in 0..1500 {

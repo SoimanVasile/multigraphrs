@@ -4,8 +4,7 @@
 pub trait FromDiskBytes {
     /// Constructs an **owned** instance from the given byte slice.
     ///
-    /// # Errors
-    /// None.
+    /// `bytes` is needed to provide the raw disk data to deserialize from.
     ///
     /// # Panics
     /// May panic if the byte slice length does not match the expected size
@@ -17,8 +16,7 @@ pub trait FromDiskBytes {
 ///
 /// Interprets the byte slice as UTF-8 and returns an **owned** `String`.
 ///
-/// # Errors
-/// None.
+/// `bytes` is needed to provide the raw UTF-8 disk data to deserialize from.
 ///
 /// # Panics
 /// Panics (via `unwrap`) if the bytes are not valid UTF-8.
@@ -34,8 +32,7 @@ macro_rules! impl_from_disk_bytes_numeric {
             impl FromDiskBytes for $t {
                 /// Deserializes a numeric type from disk bytes.
                 ///
-                /// # Errors
-                /// None.
+                /// `bytes` is needed to provide the raw disk data to deserialize from.
                 ///
                 /// # Panics
                 /// Panics if the byte slice length does not match the expected size.
@@ -56,3 +53,30 @@ impl_from_disk_bytes_numeric!(
     f32, f64
 );
 
+pub trait AsDiskBytes {
+    fn as_disk_bytes(&self) -> Vec<u8>;
+}
+
+impl AsDiskBytes for String {
+    fn as_disk_bytes(&self) -> Vec<u8> {
+        self.as_bytes().to_vec()
+    }
+}
+
+macro_rules! impl_as_disk_bytes_numeric {
+    ($($t:ty),*) => {
+        $(
+            impl AsDiskBytes for $t {
+                fn as_disk_bytes(&self) -> Vec<u8> {
+                    self.to_le_bytes().to_vec()
+                }
+            }
+        )*
+    };
+}
+
+impl_as_disk_bytes_numeric!(
+    u8, u16, u32, u64, u128,
+    i8, i16, i32, i64, i128,
+    f32, f64
+);

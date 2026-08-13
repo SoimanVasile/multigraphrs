@@ -1,21 +1,21 @@
-use multigraphrs::{Directed, MultiGraph, Undirected, Weighted, WeightedDirected};
+use multigraphrs::{Directed, RamMultiGraph, Undirected, Weighted, WeightedDirected};
 
 // ============ Empty / Single Node ============
 
 #[test]
 fn iter_empty_graph() {
-    let g = MultiGraph::<u32, u32, Directed>::new();
+    let g = RamMultiGraph::<u32, u32, Directed>::new();
     assert_eq!(g.iter().count(), 0);
 }
 
 #[test]
 fn iter_single_node_no_edges() {
-    let mut g = MultiGraph::<&str, u32, Directed>::new();
-    g.add_node("A").unwrap();
+    let mut g = RamMultiGraph::<String, u32, Directed>::new();
+    g.add_node("A".into()).unwrap();
 
     let items: Vec<_> = g.iter().collect();
     assert_eq!(items.len(), 1);
-    assert_eq!(*items[0].0, "A");
+    assert_eq!(*items[0].0, "A".to_string());
     assert!(items[0].1.is_empty());
 }
 
@@ -23,26 +23,26 @@ fn iter_single_node_no_edges() {
 
 #[test]
 fn iter_directed_with_edges() {
-    let mut g = MultiGraph::<&str, u32, Directed>::new();
-    g.add_node("A").unwrap();
-    g.add_node("B").unwrap();
-    g.add_node("C").unwrap();
+    let mut g = RamMultiGraph::<String, u32, Directed>::new();
+    g.add_node("A".into()).unwrap();
+    g.add_node("B".into()).unwrap();
+    g.add_node("C".into()).unwrap();
 
-    g.add_edge("A", "B").unwrap();
-    g.add_edge("A", "C").unwrap();
+    g.add_edge("A".into(), "B".into()).unwrap();
+    g.add_edge("A".into(), "C".into()).unwrap();
 
     let mut found_a = false;
     let mut found_b = false;
     let mut found_c = false;
 
     for (node, edges) in g.iter() {
-        match *node {
+        match node.as_str() {
             "A" => {
                 found_a = true;
                 assert_eq!(edges.len(), 2);
-                let targets: Vec<&str> = edges.iter().map(|e| *e.get_target()).collect();
-                assert!(targets.contains(&"B"));
-                assert!(targets.contains(&"C"));
+                let targets: Vec<String> = edges.iter().map(|e| e.get_target().clone()).collect();
+                assert!(targets.contains(&"B".to_string()));
+                assert!(targets.contains(&"C".to_string()));
             }
             "B" => {
                 found_b = true;
@@ -63,14 +63,14 @@ fn iter_directed_with_edges() {
 
 #[test]
 fn iter_undirected_with_edges() {
-    let mut g = MultiGraph::<u32, u32, Undirected>::new();
+    let mut g = RamMultiGraph::<u32, u32, Undirected>::new();
     g.add_node(1).unwrap();
     g.add_node(2).unwrap();
 
     g.add_edge(1, 2).unwrap();
 
     for (node, edges) in g.iter() {
-        match *node {
+        match node {
             1 => {
                 assert_eq!(edges.len(), 1);
                 assert_eq!(*edges[0].get_target(), 2);
@@ -88,17 +88,17 @@ fn iter_undirected_with_edges() {
 
 #[test]
 fn iter_weighted_directed() {
-    let mut g = MultiGraph::<&str, f64, WeightedDirected>::new();
-    g.add_node("X").unwrap();
-    g.add_node("Y").unwrap();
+    let mut g = RamMultiGraph::<String, f64, WeightedDirected>::new();
+    g.add_node("X".into()).unwrap();
+    g.add_node("Y".into()).unwrap();
 
-    g.add_edge("X", "Y", 3.5).unwrap();
+    g.add_edge("X".into(), "Y".into(), 3.5).unwrap();
 
     for (node, edges) in g.iter() {
-        match *node {
+        match node.as_str() {
             "X" => {
                 assert_eq!(edges.len(), 1);
-                assert_eq!(*edges[0].get_target(), "Y");
+                assert_eq!(*edges[0].get_target(), "Y".to_string());
                 assert_eq!(*edges[0].get_weight(), 3.5);
             }
             "Y" => {
@@ -113,7 +113,7 @@ fn iter_weighted_directed() {
 
 #[test]
 fn iter_weighted_undirected() {
-    let mut g = MultiGraph::<u32, i32, Weighted>::new();
+    let mut g = RamMultiGraph::<u32, i32, Weighted>::new();
     g.add_node(10).unwrap();
     g.add_node(20).unwrap();
 
@@ -122,7 +122,7 @@ fn iter_weighted_undirected() {
     for (node, edges) in g.iter() {
         assert_eq!(edges.len(), 1);
         assert_eq!(*edges[0].get_weight(), 500);
-        match *node {
+        match node {
             10 => assert_eq!(*edges[0].get_target(), 20),
             20 => assert_eq!(*edges[0].get_target(), 10),
             _ => panic!("Unexpected node"),
@@ -134,29 +134,29 @@ fn iter_weighted_undirected() {
 
 #[test]
 fn iter_after_remove_node() {
-    let mut g = MultiGraph::<&str, u32, Directed>::new();
-    g.add_node("A").unwrap();
-    g.add_node("B").unwrap();
-    g.add_node("C").unwrap();
+    let mut g = RamMultiGraph::<String, u32, Directed>::new();
+    g.add_node("A".into()).unwrap();
+    g.add_node("B".into()).unwrap();
+    g.add_node("C".into()).unwrap();
 
-    g.add_edge("A", "B").unwrap();
-    g.add_edge("A", "C").unwrap();
-    g.add_edge("C", "B").unwrap();
+    g.add_edge("A".into(), "B".into()).unwrap();
+    g.add_edge("A".into(), "C".into()).unwrap();
+    g.add_edge("C".into(), "B".into()).unwrap();
 
-    g.remove_node(&"B").unwrap();
+    g.remove_node(&"B".into()).unwrap();
 
-    let nodes: Vec<&str> = g.iter().map(|(k, _)| *k).collect();
+    let nodes: Vec<String> = g.iter().map(|(k, _)| k.clone()).collect();
     assert_eq!(nodes.len(), 2);
-    assert!(nodes.contains(&"A"));
-    assert!(nodes.contains(&"C"));
-    assert!(!nodes.contains(&"B"));
+    assert!(nodes.contains(&"A".to_string()));
+    assert!(nodes.contains(&"C".to_string()));
+    assert!(!nodes.contains(&"B".to_string()));
 
     // A should only have edge to C now
     for (node, edges) in g.iter() {
-        match *node {
+        match node.as_str() {
             "A" => {
                 assert_eq!(edges.len(), 1);
-                assert_eq!(*edges[0].get_target(), "C");
+                assert_eq!(*edges[0].get_target(), "C".to_string());
             }
             "C" => {
                 assert!(edges.is_empty());
@@ -170,7 +170,7 @@ fn iter_after_remove_node() {
 
 #[test]
 fn iter_count_matches_node_count() {
-    let mut g = MultiGraph::<u32, u32, Directed>::new();
+    let mut g = RamMultiGraph::<u32, u32, Directed>::new();
     g.add_node(1).unwrap();
     g.add_node(2).unwrap();
     g.add_node(3).unwrap();
@@ -186,7 +186,7 @@ fn iter_count_matches_node_count() {
 
 #[test]
 fn iter_parallel_edges() {
-    let mut g = MultiGraph::<u32, u32, Directed>::new();
+    let mut g = RamMultiGraph::<u32, u32, Directed>::new();
     g.add_node(1).unwrap();
     g.add_node(2).unwrap();
 
@@ -195,7 +195,7 @@ fn iter_parallel_edges() {
     g.add_edge(1, 2).unwrap();
 
     for (node, edges) in g.iter() {
-        match *node {
+        match node {
             1 => assert_eq!(edges.len(), 3),
             2 => assert!(edges.is_empty()),
             _ => panic!("Unexpected node"),

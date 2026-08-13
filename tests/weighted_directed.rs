@@ -1,33 +1,33 @@
-use multigraphrs::{MultiGraph, WeightedDirected};
+use multigraphrs::{RamMultiGraph, WeightedDirected};
 
 #[test]
 fn add_edge_success() {
-    let mut g = MultiGraph::<char, f64, WeightedDirected>::new();
-    g.add_node('X').unwrap();
-    g.add_node('Y').unwrap();
+    let mut g = RamMultiGraph::<u32, f64, WeightedDirected>::new();
+    g.add_node(88).unwrap();
+    g.add_node(89).unwrap();
 
-    let edge = g.add_edge('X', 'Y', 3.5).unwrap();
-    assert_eq!(*edge.get_target(), 'Y');
+    let edge = g.add_edge(88, 89, 3.5).unwrap();
+    assert_eq!(*edge.get_target(), 89);
     assert_eq!(*edge.get_weight(), 3.5);
 }
 
 #[test]
 fn add_edge_source_missing() {
-    let mut g = MultiGraph::<u32, u32, WeightedDirected>::new();
+    let mut g = RamMultiGraph::<u32, u32, WeightedDirected>::new();
     g.add_node(2).unwrap();
     assert!(g.add_edge(99, 2, 1).is_err());
 }
 
 #[test]
 fn add_edge_target_missing() {
-    let mut g = MultiGraph::<u32, u32, WeightedDirected>::new();
+    let mut g = RamMultiGraph::<u32, u32, WeightedDirected>::new();
     g.add_node(1).unwrap();
     assert!(g.add_edge(1, 99, 1).is_err());
 }
 
 #[test]
 fn edge_is_one_way() {
-    let mut g = MultiGraph::<u32, u32, WeightedDirected>::new();
+    let mut g = RamMultiGraph::<u32, u32, WeightedDirected>::new();
     g.add_node(1).unwrap();
     g.add_node(2).unwrap();
     g.add_edge(1, 2, 10).unwrap();
@@ -38,7 +38,7 @@ fn edge_is_one_way() {
 
 #[test]
 fn multiple_edges_same_pair() {
-    let mut g = MultiGraph::<u32, f64, WeightedDirected>::new();
+    let mut g = RamMultiGraph::<u32, f64, WeightedDirected>::new();
     g.add_node(1).unwrap();
     g.add_node(2).unwrap();
 
@@ -51,7 +51,7 @@ fn multiple_edges_same_pair() {
 
 #[test]
 fn both_directions_explicit() {
-    let mut g = MultiGraph::<u32, u32, WeightedDirected>::new();
+    let mut g = RamMultiGraph::<u32, u32, WeightedDirected>::new();
     g.add_node(1).unwrap();
     g.add_node(2).unwrap();
 
@@ -64,7 +64,7 @@ fn both_directions_explicit() {
 
 #[test]
 fn self_loop() {
-    let mut g = MultiGraph::<u32, u32, WeightedDirected>::new();
+    let mut g = RamMultiGraph::<u32, u32, WeightedDirected>::new();
     g.add_node(1).unwrap();
     g.add_edge(1, 1, 5).unwrap();
     assert_eq!(g.degree(&1), Ok(1));
@@ -72,7 +72,7 @@ fn self_loop() {
 
 #[test]
 fn remove_edge_success() {
-    let mut g = MultiGraph::<u32, u32, WeightedDirected>::new();
+    let mut g = RamMultiGraph::<u32, u32, WeightedDirected>::new();
     g.add_node(1).unwrap();
     g.add_node(2).unwrap();
     g.add_edge(1, 2, 50).unwrap();
@@ -85,7 +85,7 @@ fn remove_edge_success() {
 
 #[test]
 fn remove_edge_nonexistent() {
-    let mut g = MultiGraph::<u32, u32, WeightedDirected>::new();
+    let mut g = RamMultiGraph::<u32, u32, WeightedDirected>::new();
     g.add_node(1).unwrap();
     g.add_node(2).unwrap();
     assert!(g.remove_edge(1, 2, 1).is_err());
@@ -93,7 +93,7 @@ fn remove_edge_nonexistent() {
 
 #[test]
 fn remove_edge_missing_node() {
-    let mut g = MultiGraph::<u32, u32, WeightedDirected>::new();
+    let mut g = RamMultiGraph::<u32, u32, WeightedDirected>::new();
     g.add_node(1).unwrap();
     assert!(g.remove_edge(1, 99, 1).is_err());
     assert!(g.remove_edge(99, 1, 1).is_err());

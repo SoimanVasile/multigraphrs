@@ -93,9 +93,9 @@ fn run_stress_test(node_count: u32, edges_per_node: u32, test_name: &str) {
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
 
-    let backend = DiskStorage::<u32>::new(&dir);
-    let mut graph: MultiGraph<u32, u32, Directed, DiskStorage<u32>> =
-        MultiGraph::with_capacity(node_count as usize, backend);
+    let backend = DiskStorage::<u32, u32>::new(&dir);
+    let mut graph: multigraphrs::DiskMultiGraph<u32, u32, multigraphrs::Directed> = 
+        MultiGraph::with_backend(backend);
 
     let total_start = Instant::now();
     let mut results: Vec<BenchResult> = Vec::new();
@@ -103,7 +103,7 @@ fn run_stress_test(node_count: u32, edges_per_node: u32, test_name: &str) {
     // ─── Phase 1: Add Nodes ───
     let rss_before = get_rss_bytes();
     let start = Instant::now();
-    graph.bulk_add_node(&Vec::from_iter(0..node_count));
+    graph.bulk_add_node(&Vec::from_iter(0..node_count)).unwrap();
     let duration = start.elapsed();
     let rss_after = get_rss_bytes();
     results.push(BenchResult {
@@ -185,7 +185,7 @@ fn run_stress_test(node_count: u32, edges_per_node: u32, test_name: &str) {
     let mut found = 0u32;
     for i in 0..check_count {
         let target = (i + 1) % node_count;
-        if graph.contains_edge(&i, &target) {
+        if graph.contains_edge(&i, &target).unwrap() {
             found += 1;
         }
     }

@@ -41,10 +41,6 @@ pub struct SuperBlock{
 
 impl Default for SuperBlock{
     /// Returns a default instance of `SuperBlock`.
-    ///
-    /// # Errors
-    /// None.
-    ///
     fn default() -> Self{
         Self::new()
     }
@@ -56,13 +52,6 @@ unsafe impl Zeroable for SuperBlock {}
 impl SuperBlock {
     /// Creates a new `SuperBlock` with the `"MGRF"` magic number, version `1`,
     /// and all counters and pointers initialized to zero.
-    ///
-    /// # Returns
-    /// An **owned** `SuperBlock`.
-    ///
-    /// # Errors
-    /// None.
-    ///
     pub fn new() -> Self{
         Self{
             magic_number: u32::from_le_bytes(*b"MGRF"),
@@ -84,42 +73,19 @@ impl SuperBlock {
     }
 
     /// Returns the current node count.
-    ///
-    /// # Returns
-    /// A **copy** of `node_count` (`u64` is `Copy`).
-    ///
-    /// # Errors
-    /// None.
-    ///
     pub fn get_node_count(&self) -> u64{
         self.node_count
     }
 
-    /// Increments the node count by one.
-    ///
-    /// Mutates `self` in place.
-    ///
-    /// # Side Effects
-    /// Modifies the `node_count` field of `self`.
-    ///
-    /// # Errors
-    /// None.
-    ///
+    /// Increments the node count by one. Mutates `self` in place.
     pub fn increment_node_counter(&mut self){
         self.node_count+=1;
     }
 
     /// Reinterprets this `SuperBlock` as a raw byte slice for disk serialization.
     ///
-    /// # Returns
-    /// An **immutable reference** (`&[u8]`) into the struct's memory layout.
-    ///
     /// # Safety
     /// Uses `unsafe` pointer casting. Sound because `SuperBlock` is `#[repr(C)]` and `Pod`.
-    ///
-    /// # Errors
-    /// None.
-    ///
     pub fn convert_to_bytes(&self) -> &[u8]{
         unsafe{
             std::slice::from_raw_parts(
@@ -129,31 +95,18 @@ impl SuperBlock {
         }
     }
 
-    /// Returns the next free byte offset in `structure.bin`.
+    /// Returns the next free byte offset in `structure.bin` and advances the `next_structure_free_block` by `size`.
     ///
-    /// # Returns
-    /// A **copy** of `next_structure_free_block` (`u64` is `Copy`).
-    ///
-    /// # Side Effects
-    /// Advances `next_structure_free_block` by `size`.
-    ///
-    /// # Errors
-    /// None.
-    ///
+    /// `size` specifies the number of bytes to advance the free block pointer by, needed to reserve space.
     pub fn get_free_block_structure(&mut self, size: &u64) -> u64{
         self.next_structure_free_block += *size;
 
         self.next_structure_free_block - *size
     }
 
-    /// Returns the next free byte offset in `reverse_structure.bin`.
+    /// Returns the next free byte offset in `reverse_structure.bin` and advances the `next_reverse_structure_free_block` by `size`.
     ///
-    /// # Side Effects
-    /// Advances `next_reverse_structure_free_block` by `size`.
-    ///
-    /// # Errors
-    /// None.
-    ///
+    /// `size` specifies the number of bytes to advance the free block pointer by, needed to reserve space.
     pub fn get_free_block_reverse_structure(&mut self, size: &u64) -> u64{
         self.next_reverse_structure_free_block += *size;
 
@@ -161,37 +114,19 @@ impl SuperBlock {
     }
 
     /// Returns the next free byte offset in `data.bin`.
-    ///
-    /// # Returns
-    /// A **copy** of `next_data_free_block` (`u64` is `Copy`).
-    ///
-    /// # Errors
-    /// None.
-    ///
     pub fn get_free_block_data(&self) -> u64{
         self.next_data_free_block
     }
-    /// Advances the data free-block pointer by `size` bytes.
+    /// Advances the data free-block pointer by `size` bytes. Mutates `self` in place.
     ///
-    /// Mutates `self` in place.
-    ///
-    /// # Side Effects
-    /// Modifies the `next_data_free_block` field of `self`.
-    ///
-    /// # Errors
-    /// None.
-    ///
+    /// `size` specifies the number of bytes to advance the free block pointer by, needed to reserve space.
     pub fn find_next_data_free_block(&mut self, size: &u64){
         self.next_data_free_block += *size;
     }
 
     /// Returns the `i`-th header value for `reverse_structure.bin`.
     ///
-    /// # Returns
-    /// A **copy** of the requested header (`u64` is `Copy`).
-    ///
-    /// # Errors
-    /// None.
+    /// `i` specifies the index of the header to retrieve.
     ///
     /// # Panics
     /// Panics if `i` is out of bounds for the `header_reverse_structure` array.
@@ -201,8 +136,7 @@ impl SuperBlock {
 
     /// Returns the `i`-th header value for `structure.bin`.
     ///
-    /// # Errors
-    /// None.
+    /// `i` specifies the index of the header to retrieve.
     ///
     /// # Panics
     /// Panics if `i` is out of bounds for the `header_structure` array.
@@ -211,33 +145,21 @@ impl SuperBlock {
     }
 
     /// Returns the index of the next free node from the linked list.
-    ///
-    /// # Errors
-    /// None.
-    ///
     pub fn next_free_node(&self) -> u64{
         self.head_linked_list_node
     }
 
     /// Updates the head of the free node linked list.
     ///
-    /// # Side Effects
-    /// Modifies `head_linked_list_node`.
-    ///
-    /// # Errors
-    /// None.
-    ///
+    /// `next_id` is needed to point to the new head of the linked list.
     pub fn change_header(&mut self, next_id: &u64){
         self.head_linked_list_node = *next_id;
     }
 
     /// Sets the `i`-th header value for `structure.bin`.
     ///
-    /// # Side Effects
-    /// Modifies `header_structure`.
-    ///
-    /// # Errors
-    /// None.
+    /// `index` is needed to specify which header to update.
+    /// `next_id` is needed to specify the new value for the header.
     ///
     /// # Panics
     /// Panics if `index` is out of bounds.
@@ -247,11 +169,8 @@ impl SuperBlock {
 
     /// Sets the `i`-th header value for `reverse_structure.bin`.
     ///
-    /// # Side Effects
-    /// Modifies `header_reverse_structure`.
-    ///
-    /// # Errors
-    /// None.
+    /// `index` is needed to specify which header to update.
+    /// `next_id` is needed to specify the new value for the header.
     ///
     /// # Panics
     /// Panics if `index` is out of bounds.

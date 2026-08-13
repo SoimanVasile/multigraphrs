@@ -14,19 +14,20 @@ pub enum FileId {
     Structure = 1,
     Reverse = 2,
     Data = 3,
+    NodeId = 4,
+    NodeValue = 5,
 }
 
 impl FileId {
     /// Converts a `u8` value into an `Option<FileId>`.
-    ///
-    /// # Errors
-    /// Returns `None` if the provided value does not correspond to a valid `FileId`.
     pub fn from_u8(val: u8) -> Option<Self> {
         match val {
             0 => Some(FileId::Node),
             1 => Some(FileId::Structure),
             2 => Some(FileId::Reverse),
             3 => Some(FileId::Data),
+            4 => Some(FileId::NodeId),
+            5 => Some(FileId::NodeValue),
             _ => None,
         }
     }
@@ -282,11 +283,13 @@ struct DBFiles<'a>{
     file_structure: &'a mut FileManager,
     file_reverse: &'a mut FileManager,
     file_data: &'a mut FileManager,
+    file_node_id: &'a mut FileManager,
+    file_node_value: &'a mut FileManager,
 }
 
 impl<'a> DBFiles<'a>{
-    pub fn new(file_node: &'a mut FileManager, file_structure: &'a mut FileManager, file_reverse: &'a mut FileManager, file_data: &'a mut FileManager) -> Self{
-        Self{file_node, file_structure, file_reverse, file_data}
+    pub fn new(file_node: &'a mut FileManager, file_structure: &'a mut FileManager, file_reverse: &'a mut FileManager, file_data: &'a mut FileManager, file_node_id: &'a mut FileManager, file_node_value: &'a mut FileManager) -> Self{
+        Self{file_node, file_structure, file_reverse, file_data, file_node_id, file_node_value}
     }
 }
 
@@ -301,6 +304,8 @@ fn replay_file(path: &PathBuf, files: &mut DBFiles) -> Result<(), DbError> {
                     FileId::Structure => &mut files.file_structure,
                     FileId::Reverse => &mut files.file_reverse,
                     FileId::Data => &mut files.file_data,
+                    FileId::NodeId => &mut files.file_node_id,
+                    FileId::NodeValue => &mut files.file_node_value,
                 };
                 match record {
                     WalRecord::Write { offset, bytes, .. } => {
@@ -367,7 +372,7 @@ pub struct WalRequest {
 ///
 /// Subsequent callers in the same batch receive `rotated = false`
 /// because a single flush is sufficient.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct WalManager {
     dir: PathBuf,
     /// The sender half of the channel to the background thread.
@@ -393,6 +398,9 @@ impl WalManager {
     ///
     /// # Panics
     /// Panics if the initial `wal.bin` file cannot be opened.
+    ///
+    /// # Errors
+    /// Returns [`std::io::Error`] if spawning the thread fails.
     pub fn start(&mut self, max_file_size: u64) -> Result<(), std::io::Error> {
         let (request_tx, request_rx) = std::sync::mpsc::channel();
         self.request_tx = Some(request_tx);
@@ -408,18 +416,11 @@ impl WalManager {
     /// Sends a serialized transaction to the background thread and
     /// blocks until the data is durable on disk.
     ///
-    /// # Returns
-    /// - `Ok(true)` — the WAL was rotated; the caller **must** flush
-    ///   all four graph data files before issuing the next commit.
-    /// - `Ok(false)` — normal commit, no flush needed.
-    ///
     /// # Errors
-    /// - [`std::io::ErrorKind::NotConnected`] if [`start`](Self::start)
-    ///   was never called.
-    /// - [`std::io::ErrorKind::BrokenPipe`] if the background thread
-    ///   has panicked or been dropped.
-    /// - Any I/O error propagated from the background thread's
-    ///   `write_all` or `sync_all`.
+    /// Returns [`std::io::Error`] on failure:
+    /// - [`std::io::ErrorKind::NotConnected`] if [`start`](Self::start) was never called.
+    /// - [`std::io::ErrorKind::BrokenPipe`] if the background thread has panicked or been dropped.
+    /// - Any I/O error propagated from the background thread's `write_all` or `sync_all`.
     pub fn commit(&self, tx: &WalTransaction) -> Result<bool, std::io::Error> {
         let bytes = tx.serialize();
 
@@ -456,11 +457,13 @@ impl WalManager {
         file_structure: &mut FileManager,
         file_reverse: &mut FileManager,
         file_data: &mut FileManager,
+        file_node_id: &mut FileManager,
+        file_node_value: &mut FileManager,
     ) -> Result<(), DbError> {
         let old_wal_path = self.dir.join("old_wal.bin");
         let wal_path = self.dir.join("wal.bin");
 
-        let mut files = DBFiles::new(file_node, file_structure, file_reverse, file_data);
+        let mut files = DBFiles::new(file_node, file_structure, file_reverse, file_data, file_node_id, file_node_value);
         replay_file(&old_wal_path, &mut files)?;
         replay_file(&wal_path, &mut files)?;
 
@@ -599,9 +602,9 @@ fn rotate_wal(file_opt: &mut Option<File>, old_wal_path: &PathBuf, wal_path: &Pa
 
     (|| -> std::io::Result<()> {
         if old_wal_path.exists() {
-            std::fs::remove_file(&old_wal_path)?;
+            std::fs::remove_file(old_wal_path)?;
         }
-        std::fs::rename(&wal_path, &old_wal_path)?;
+        std::fs::rename(wal_path, old_wal_path)?;
         Ok(())
     })()?;
     
@@ -613,7 +616,7 @@ fn open_new_file(wal_path: &PathBuf) -> std::io::Result<(File, u64)> {
     let file = OpenOptions::new()
         .create(true)
         .append(true)
-        .open(&wal_path)?;
+        .open(wal_path)?;
     let metadata = file.metadata()?;
     Ok((file, metadata.len()))
 }
