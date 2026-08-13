@@ -1,12 +1,53 @@
+use std::hash::Hash;
+use std::sync::mpsc::Sender;
 use std::{fs::OpenOptions, path::PathBuf};
 use memmap2::MmapMut;
 use memmap2::MmapOptions;
 use crate::core::db_error::DbError;
+use crate::storage::disk_storage::from_disk_bytes::{AsDiskBytes, FromDiskBytes};
 
 
 const FILE_INITIAL_SIZE: u64 = 1024 * 1024 * 64;
 
 const FOUR_GB: u64 = 1024 * 1024 * 1024 * 4;
+
+enum FMTypeRequest<'a>{
+    Read(u64),
+    Write(&'a [u8])
+}
+
+enum FMTypeResponse
+where
+{
+    Read(Vec<u8>),
+    Write,
+}
+
+pub struct FMResponse
+{
+    status: Result<(), DbError>,
+    _type: FMTypeResponse
+}
+
+impl FMResponse{
+    fn new(_type: FMTypeResponse, status: Result<(), DbError>) -> Self{
+        Self {_type, status}
+    }
+}
+
+pub struct FMRequest<'a>
+    {
+    _type: FMTypeRequest<'a>,
+    offset: u64,
+    sender: Sender<FMResponse>
+}
+
+impl<'a> FMRequest<'a>{
+    fn new(_type: FMTypeRequest<'a>, offset: u64, sender: Sender<FMResponse>) -> Self{
+        Self { _type, offset, sender }
+    }
+}
+
 
 #[derive(Debug)]
 pub struct FileManager{
