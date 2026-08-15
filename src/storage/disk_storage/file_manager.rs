@@ -1,4 +1,5 @@
 use std::hash::Hash;
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 use std::{fs::OpenOptions, path::PathBuf};
@@ -12,52 +13,65 @@ const FILE_INITIAL_SIZE: u64 = 1024 * 1024 * 64;
 
 const FOUR_GB: u64 = 1024 * 1024 * 1024 * 4;
 
-enum FMTypeRequest<'a>{
-    Read(u64),
-    Write(&'a [u8])
+#[derive(Debug, Clone, Copy)]
+struct ZeroCopyBytes{
+    length: u64,
+    raw_pointer: *const [u8]
 }
 
-enum FMTypeResponse<'a>
+unsafe impl Send for ZeroCopyBytes{}
+
+impl ZeroCopyBytes{
+    fn new(reference: &[u8]) -> Self{
+        Self {length: reference.len() as u64, raw_pointer: reference as *const [u8]}
+    }
+}
+
+#[derive(Debug, Clone)]
+enum FMTypeRequest{
+    Read(/*offset*/ u64, /*length*/ u64, /*buffer*/ Vec<u8>),
+    Write(/*offset*/ u64, /*bytes*/ ZeroCopyBytes)
+}
+
+enum FMTypeResponse
 {
-    Read(&'a [u8]),
+    Read(Vec<u8>),
     Write,
 }
 
-pub struct FMResponse<'a>
+pub struct FMResponse
 {
     status: Result<(), DbError>,
-    _type: FMTypeResponse<'a>
+    _type: FMTypeResponse
 }
 
-impl<'a> FMResponse<'a>
+impl<'a> FMResponse
 {
-    fn new(_type: FMTypeResponse<'a>, status: Result<(), DbError>) -> Self{
+    fn new(_type: FMTypeResponse, status: Result<(), DbError>) -> Self{
         Self {_type, status}
     }
 }
 
-pub struct FMRequest<'a>
+pub struct FMRequest
     {
-    _type: FMTypeRequest<'a>,
+    _type: FMTypeRequest,
     offset: u64,
-    sender: Sender<FMResponse<'a>>
+    sender: Sender<FMResponse>
 }
 
-impl<'a> FMRequest<'a>{
-    fn new(_type: FMTypeRequest<'a>, offset: u64, sender: Sender<FMResponse<'a>>) -> Self{
+impl<'a> FMRequest{
+    fn new(_type: FMTypeRequest, offset: u64, sender: Sender<FMResponse>) -> Self{
         Self { _type, offset, sender }
     }
 }
 
 
 #[derive(Debug)]
-pub struct FileManager<'a>{
-    mmap: MmapMut,
-    file: std::fs::File,
-    sender: Sender<FMRequest<'a>>,
+pub struct FileManager{
+    sender: Sender<FMRequest>,
 }
 
-impl<'a> FileManager<'a>{
+impl FileManager{
     /// Creates a new `FileManager` instance for the given file path. Creates the file if it does not exist, modifies the file length on disk if it is empty, and maps the file into memory.
     ///
     /// `file_path` is needed to specify the location of the file to open or create.
@@ -84,12 +98,7 @@ impl<'a> FileManager<'a>{
             file_manager_worker_thread(file_path, request);
         });
 
-        let mmap = unsafe{
-            MmapOptions::new()
-                .map_mut(&file)?
-        };
-
-        Ok((Self{file, mmap, sender}, created))
+        Ok((Self{sender}, created))
     }
 
     
@@ -103,7 +112,8 @@ impl<'a> FileManager<'a>{
     /// # Panics
     /// Panics if `start > end` or if `end` exceeds the actual length of the memory map.
     pub fn zeroing_mmap(&mut self, start: u64, end: u64){
-        self.mmap[start as usize .. end as usize].fill(0);
+        todo!()
+        // self.mmap[start as usize .. end as usize].fill(0);
     }
 
 
@@ -120,7 +130,8 @@ impl<'a> FileManager<'a>{
     /// Panics if `start > end` or if `end` exceeds the actual length of the memory map or if the length
     /// of the bytes is different from the range
     pub fn writing_bytes_to_mmap(&mut self, start: u64, end: u64,  bytes: &[u8]){
-        self.mmap[start as usize .. end as usize].copy_from_slice(bytes);
+        todo!()
+        // self.mmap[start as usize .. end as usize].copy_from_slice(bytes);
     }
 
     /// Reads a slice of bytes from the memory map.
@@ -131,7 +142,8 @@ impl<'a> FileManager<'a>{
     /// # Panics
     /// Panics if the range `[start, end)` is out of bounds for the memory map.
     pub fn reading_bytes(&self, start: u64, end: u64) -> &[u8]{
-        &self.mmap[start as usize .. end as usize]
+        todo!();
+        // &self.mmap[start as usize .. end as usize]
     }
 
     /// Reads a mutable slice of bytes from the memory map that can modify the memory-mapped file.
@@ -142,12 +154,14 @@ impl<'a> FileManager<'a>{
     /// # Panics
     /// Panics if the range `[start, end)` is out of bounds for the memory map.
     pub fn reading_bytes_mut(&mut self, start: u64, end: u64) -> &mut [u8] {
-        &mut self.mmap[start as usize .. end as usize]
+        todo!();
+        // &mut self.mmap[start as usize .. end as usize]
     }
 
     /// Returns a raw mutable pointer to the underlying memory map. Provides access that can mutate the memory-mapped file.
     pub fn mmap_ptr_mut(&mut self) -> *mut u8 {
-        self.mmap.as_mut_ptr()
+        todo!()
+        // self.mmap.as_mut_ptr()
     }
 
 
@@ -161,7 +175,8 @@ impl<'a> FileManager<'a>{
     /// # Panics
     /// Panics if either the source range or the destination range is out of bounds.
     pub fn copy_within(&mut self, src_start: u64, src_end: u64, dest_start: u64){
-        self.mmap.copy_within(src_start as usize .. src_end as usize, dest_start as usize);
+        todo!()
+        // self.mmap.copy_within(src_start as usize .. src_end as usize, dest_start as usize);
     }
 
     /// Increases the size of the underlying file. Modifies the file size on disk and re-establishes the memory map.
@@ -169,13 +184,15 @@ impl<'a> FileManager<'a>{
     /// # Errors
     /// Returns a [`DbError`] if file metadata cannot be read, resizing fails, or mapping fails.
     pub fn increase_file_size(&mut self) -> Result<(), DbError>{
-        let length = self.check_next_size(self.file_len()?)?;        self.file.set_len(length)?;
-
-        self.mmap = unsafe{
-            MmapOptions::new()
-                .map_mut(&self.file)?
-        };
-        Ok(())
+        todo!()
+        // let length = self.check_next_size(self.file_len()?)?;
+        // self.file.set_len(length)?;
+        //
+        // self.mmap = unsafe{
+        //     MmapOptions::new()
+        //         .map_mut(&self.file)?
+        // };
+        // Ok(())
     }
 
     pub fn check_next_size(&self, length: u64) -> Result<u64, DbError>{
@@ -191,9 +208,10 @@ impl<'a> FileManager<'a>{
     /// # Errors
     /// Returns a [`DbError`] (though currently infallible) for API consistency.
     pub fn file_len(&self) -> Result<u64, DbError>{
+        todo!()
         // We can just return the length of the memory map, which is identical to the file's length.
         // This avoids making a statx syscall to the OS.
-        Ok(self.mmap.len() as u64)
+        // Ok(self.mmap.len() as u64)
     }
 
     /// Flushes the memory map changes to disk asynchronously. Forces the OS to synchronize memory map modifications to the underlying storage.
@@ -201,10 +219,43 @@ impl<'a> FileManager<'a>{
     /// # Errors
     /// Returns a [`DbError`] if the flush operation fails.
     pub fn flush(&self) -> Result<(), DbError> {
-        Ok(self.mmap.flush()?)
+        todo!()
+        // Ok(self.mmap.flush()?)
     }
 }
 
-fn file_manager_worker_thread(file_path: PathBuf, sender: Receiver<FMRequest>){
+fn file_manager_worker_thread(file_path: PathBuf, rec: Receiver<FMRequest>){
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(file_path).unwrap();
 
+    let mmap = unsafe {
+        MmapOptions::new()
+            .map_mut(&file)
+    }.unwrap();
+
+
+    loop{
+        let mut requests: Vec<FMRequest> = Vec::with_capacity(1<<15);
+
+        requests.push(rec.recv().unwrap());
+
+        while let Ok(req) = rec.try_recv(){
+            requests.push(req);
+        }
+
+        for req in requests.into_iter(){
+            match req._type{
+                FMTypeRequest::Read(offset, length, mut buffer) => {
+                    buffer.extend_from_slice(&mmap[offset as usize .. (offset + length) as usize]);
+                    req.sender.send(FMResponse::new(FMTypeResponse::Read(buffer), Ok(())));
+                },
+                FMTypeRequest::Write(offset, pointer) => {todo!()},
+            }
+        }
+        
+    }
 }
