@@ -1,4 +1,5 @@
 use std::hash::Hash;
+use std::mem::take;
 
 use crate::storage::disk_storage::from_disk_bytes::AsDiskBytes;
 use crate::storage::disk_storage::disk_edge::DiskEdge;
@@ -23,6 +24,7 @@ where
     mmap_ref: &'a DiskStorage<K, W>,
     current_offset: u64,
     edges_left: u64,
+    buf: Vec<u8>,
 }
 
 impl<'a, K, W> DiskEdgeIterator<'a, K, W>
@@ -37,7 +39,7 @@ where
     /// * `offset` - Determines where in `structure.bin` the iteration should begin.
     /// * `number_of_edges` - Specifies the exact number of edges to read before iteration stops.
     pub fn new(mmap_ref: &'a DiskStorage<K, W>, offset: &u64, number_of_edges: &u64) -> DiskEdgeIterator<'a, K, W>{
-        DiskEdgeIterator{mmap_ref, current_offset: *offset, edges_left: *number_of_edges}
+        DiskEdgeIterator{mmap_ref, current_offset: *offset, edges_left: *number_of_edges, buf: Vec::with_capacity(size_of::<DiskEdge>())}
     }
 }
 impl<'a, K, W> Iterator for DiskEdgeIterator<'a, K, W>
@@ -55,17 +57,25 @@ where
         if self.edges_left == 0{
             return None;
         }
+        let mut buf = std::mem::take(&mut self.buf);
         
-        let struct_bytes = &self.mmap_ref.file_manager_edge_structure.reading_bytes(self.current_offset,self.current_offset + size_of::<DiskEdge>() as u64);
+        buf = match self.mmap_ref.file_manager_edge_structure.reading_bytes(self.current_offset,self.current_offset + size_of::<DiskEdge>() as u64, buf){
+            Ok(bytes) => {bytes},
+            Err(_) => return None,
+        };
 
-        let disk_edge: &DiskEdge = bytemuck::from_bytes(struct_bytes);
+        let disk_edge: DiskEdge = {*bytemuck::from_bytes(&buf)};
         self.current_offset += size_of::<DiskEdge>() as u64;
         
-        let weight_bytes: &[u8] = self.mmap_ref.file_manager_weight_data.reading_bytes(disk_edge.weight_offset, disk_edge.weight_offset + disk_edge.weight_len);
+        buf = match self.mmap_ref.file_manager_weight_data.reading_bytes(disk_edge.weight_offset, disk_edge.weight_offset + disk_edge.weight_len, buf){
+            Ok(e) => {e},
+            Err(_) => return None,
+        };
 
-        let weight: W = FromDiskBytes::from_bytes(weight_bytes);
+        let weight: W = FromDiskBytes::from_bytes(&buf);
 
         self.edges_left-=1;
+        self.buf = buf;
 
         Some(Edge::new(disk_edge.node, &weight))
     }
@@ -85,6 +95,7 @@ where
     mmap_ref: &'a DiskStorage<K, W>,
     current_offset: u64,
     edges_left: u64,
+    buf: Vec<u8>,
 }
 
 impl<'a, K, W> DiskReverseEdgeIterator<'a, K, W>
@@ -99,7 +110,7 @@ where
     /// * `offset` - Determines where in `reverse_structure.bin` the iteration should begin.
     /// * `number_of_edges` - Specifies the exact number of reverse entries to read before iteration stops.
     pub fn new(mmap_ref: &'a DiskStorage<K, W>, offset: &u64, number_of_edges: &u64) -> DiskReverseEdgeIterator<'a, K, W>{
-        DiskReverseEdgeIterator{mmap_ref, current_offset: *offset, edges_left: *number_of_edges}
+        DiskReverseEdgeIterator{mmap_ref, current_offset: *offset, edges_left: *number_of_edges, buf: Vec::with_capacity(size_of::<u64>())}
     }
 }
 impl<'a, K, W> Iterator for DiskReverseEdgeIterator<'a, K, W>
@@ -118,10 +129,15 @@ where
         if self.edges_left == 0{
             return None;
         }
-        
-        let struct_bytes = self.mmap_ref.file_manager_reverse_edge.reading_bytes(self.current_offset, self.current_offset + size_of::<u64>() as u64);
 
-        let node: u64 = u64::from_le_bytes(struct_bytes.try_into().unwrap());
+        let mut buf = take(&mut self.buf);
+        
+        buf = match self.mmap_ref.file_manager_reverse_edge.reading_bytes(self.current_offset, self.current_offset + size_of::<u64>() as u64, buf){
+            Ok(e) => e,
+            Err(_) => return None,
+        };
+
+        let node: u64 = u64::from_bytes(&buf);
         self.current_offset += size_of::<u64>() as u64;
         
         self.edges_left-=1;

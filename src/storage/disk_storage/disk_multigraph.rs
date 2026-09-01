@@ -122,8 +122,9 @@ fn resizing_disk_node(file_manager: &mut FileManager, super_block: &mut SuperBlo
     let edge_offset_end = edge_offset + (disk_node.number_of_edges * size_of::<DiskEdge>() as u64);
 
     if let Some(t) = tx.as_deref_mut() {
-        let bytes = file_manager.reading_bytes(edge_offset, edge_offset_end);
-        t.write_bytes(FileId::Structure, free_offset, bytes);
+        let buf = Vec::with_capacity(disk_node.capacity as usize);
+        let bytes = file_manager.reading_bytes(edge_offset, edge_offset_end, buf)?;
+        t.write_bytes(FileId::Structure, free_offset, &bytes);
     } else {
         file_manager.copy_within(edge_offset, edge_offset_end, free_offset);
     }
@@ -163,8 +164,9 @@ pub fn resizing_disk_node_reverse(file_manager: &mut FileManager, super_block: &
 
     let src_end = old_offset + (disk_node.number_of_reverse_edges * size_of::<u64>() as u64);
     if let Some(t) = tx.as_deref_mut() {
-        let bytes = file_manager.reading_bytes(old_offset, src_end);
-        t.write_bytes(FileId::Reverse, free_offset, bytes);
+        let buf = Vec::with_capacity(disk_node.reverse_capacity as usize);
+        let bytes = file_manager.reading_bytes(old_offset, src_end, buf)?;
+        t.write_bytes(FileId::Reverse, free_offset, &bytes);
     } else {
         file_manager.copy_within(old_offset, src_end, free_offset);
     }
@@ -281,8 +283,9 @@ where
         }
 
 
-        let super_block_bytes = file_node.reading_bytes(0, 1024);
-        let super_block: SuperBlock = *bytemuck::from_bytes(super_block_bytes)  ;
+        let buf = Vec::with_capacity(size_of::<SuperBlock>());
+        let super_block_bytes = file_node.reading_bytes(0, 1024, buf).expect("Failed to read the SuperBlock");
+        let super_block: SuperBlock = *bytemuck::from_bytes(&super_block_bytes);
 
         let node_count = super_block.node_count;
         let edge_count = super_block.edge_count;
@@ -357,10 +360,14 @@ where
     ///
     /// # Panics
     /// Panics if reading from the memory map fails.
-    pub fn get_super_block(&self) -> SuperBlock{
-        let superblock_bytes:&[u8] = self.file_manager_node.reading_bytes(0, SUPER_BLOCK_SIZE as u64);
-        let super_block: &SuperBlock = bytemuck::from_bytes(superblock_bytes);
-        *super_block
+    pub fn get_super_block(&self) -> Result<SuperBlock, DbError>{
+        let buf = Vec::with_capacity(size_of::<SuperBlock>());
+        let superblock_bytes = self.file_manager_node.reading_bytes(0, SUPER_BLOCK_SIZE as u64, buf).map_err(|e|{
+            self.poison();
+            e
+        })?;
+        let super_block: &SuperBlock = bytemuck::from_bytes(&superblock_bytes);
+        Ok(*super_block)
     }
 
     /// Calculates the absolute byte offset of a [`DiskNode`] within the node storage file.
@@ -419,13 +426,17 @@ where
     ///
     /// # Panics
     /// Panics if `source` points beyond the memory map bounds.
-    pub fn get_disk_node(&self, source: &u64) -> DiskNode{
+    pub fn get_disk_node(&self, source: &u64) -> Result<DiskNode, DbError>{
         let offset = self.calculate_node_offset(source);
 
-        let disk_node_bytes: &[u8] = self.file_manager_node.reading_bytes(offset, offset + std::mem::size_of::<DiskNode>() as u64);
-        let disk_node: &DiskNode = bytemuck::from_bytes(disk_node_bytes);
+        let buf = Vec::with_capacity(size_of::<DiskNode>());
+        let disk_node_bytes = self.file_manager_node.reading_bytes(offset, offset + std::mem::size_of::<DiskNode>() as u64, buf).map_err(|e|{
+            self.poison();
+            e
+        })?;
+        let disk_node: &DiskNode = bytemuck::from_bytes(&disk_node_bytes);
 
-        *disk_node
+        Ok(*disk_node)
     }
 
     /// Computes the byte offset of the `edge_numbers`-th edge within a node's
@@ -561,7 +572,7 @@ where
     /// # Panics
     /// Panics if the edge region exceeds the structure memory map bounds.
     pub fn remove_edges_from_node(&mut self, disk_node: &mut DiskNode, mut tx: Option<&mut WalTransaction>)-> Result<(), DbError>{
-        let mut super_block = self.get_super_block();
+        let mut super_block = self.get_super_block()?;
         let mut node_changed = false;
 
         if disk_node.number_of_edges > 0 {
@@ -649,8 +660,12 @@ where
             let dest_start = edge_offset_removed;
 
             if let Some(ref mut t) = tx {
-                let bytes = self.file_manager_edge_structure.reading_bytes(src_start, src_end);
-                t.write_bytes(FileId::Structure, dest_start, bytes);
+                let buf = Vec::with_capacity(size_of::<DiskEdge>());
+                let bytes = self.file_manager_edge_structure.reading_bytes(src_start, src_end, buf).map_err( |e| {
+                    self.poison();
+                    e
+                })?;
+                t.write_bytes(FileId::Structure, dest_start, &bytes);
             } else {
                 self.file_manager_edge_structure.copy_within(src_start, src_end, dest_start);
             }
@@ -671,19 +686,19 @@ where
     /// # Errors
     /// None.
     ///
-    pub fn next_node_id(&self, superblock: &mut SuperBlock) -> u64 {
+    pub fn next_node_id(&self, superblock: &mut SuperBlock) -> Result<u64, DbError> {
         let node_id = superblock.next_free_node();
 
         if node_id == u64::MAX {
             superblock.node_count += 1;
-            return superblock.node_count - 1;
+            return Ok(superblock.node_count - 1);
         }
 
-        let disk_node = self.get_disk_node(&node_id);
+        let disk_node = self.get_disk_node(&node_id)?;
         let next_id = disk_node.get_edge_offset(); // We store the ID directly
         superblock.change_header(&next_id);
 
-        node_id
+        Ok(node_id)
     }
 
     /// Applies a WAL transaction directly to the memory maps.
@@ -748,8 +763,12 @@ where
             let last_end = last_start + std::mem::size_of::<u64>() as u64;
             
             if let Some(ref mut t) = tx {
-                let bytes = self.file_manager_reverse_edge.reading_bytes(last_start, last_end);
-                t.write_bytes(FileId::Reverse, start, bytes);
+                let buf = Vec::with_capacity(size_of::<u64>());
+                let bytes = self.file_manager_reverse_edge.reading_bytes(last_start, last_end, buf).map_err(|e| {
+                    self.poison();
+                    e
+                })?;
+                t.write_bytes(FileId::Reverse, start, &bytes);
             } else {
                 self.file_manager_reverse_edge.copy_within(last_start, last_end, start);
             }
@@ -781,9 +800,13 @@ where
     fn add_node(&mut self) -> Result<u64, GraphError> {
         self.check_poisoned()?;
         let mut tx = WalTransaction::new();
-        let mut superblock: SuperBlock = self.get_super_block();
+        let mut superblock: SuperBlock = self.get_super_block().map_err(|e| {
+            GraphError::Db(e)
+        })?;
 
-        let new_node_id = self.next_node_id(&mut superblock);
+        let new_node_id = self.next_node_id(&mut superblock).map_err(|e|{
+            GraphError::Db(e)
+        })?;
         self.node_count = superblock.node_count;
         let disk_node: DiskNode = DiskNode::new(new_node_id, u64::MAX, u64::MAX);
         
@@ -815,11 +838,15 @@ where
     fn bulk_add_node(&mut self, number_of_nodes: &u64) -> Result<Vec<u64>, GraphError> {
         self.check_poisoned()?;
         let mut tx = WalTransaction::new();
-        let mut super_block: SuperBlock = self.get_super_block();
+        let mut super_block: SuperBlock = self.get_super_block().map_err(|e| {
+            GraphError::Db(e)
+        })?;
 
         let mut new_ids: Vec<u64> = Vec::with_capacity(*number_of_nodes as usize);
         for i in 0..*number_of_nodes{
-            let id = self.next_node_id(&mut super_block);
+            let id = self.next_node_id(&mut super_block).map_err(|e| {
+                GraphError::Db(e)
+            })?;
             self.node_count = super_block.node_count;
             new_ids.push(id);
             let disk_node: DiskNode = DiskNode::new(new_ids[i as usize], u64::MAX, u64::MAX);
@@ -850,8 +877,12 @@ where
     fn add_edge_to_node(&mut self, node: &u64, edge: &Edge<W>) -> Result<(), GraphError> {
         self.check_poisoned()?;
         let mut tx = WalTransaction::new();
-        let mut disk_node = self.get_disk_node(node);
-        let mut superblock = self.get_super_block();
+        let mut disk_node = self.get_disk_node(node).map_err(|e| {
+            GraphError::Db(e)
+        })?;
+        let mut superblock = self.get_super_block().map_err(|e| {
+            GraphError::Db(e)
+        })?;
 
         if check_node_allocated(&disk_node, FileId::Structure).map_err(|e| { self.poison(); GraphError::from(e) })? {
                 allocated_disk_node(&mut disk_node, &mut self.file_manager_edge_structure, FileId::Structure, &mut superblock, &mut tx).map_err(|e| { self.poison(); GraphError::from(e) })?;            }
@@ -896,13 +927,19 @@ where
     fn bulk_add_edge_to_node(&mut self, edges: &[(u64, Edge<W>)]) -> Result<(), GraphError> {
         self.check_poisoned()?;
         let mut tx = WalTransaction::new();
-        let mut super_block = self.get_super_block();
+        let mut super_block = self.get_super_block().map_err(|e| {
+            GraphError::Db(e)
+        })?;
 
         let mut seen_disk_node: HashMap<u64, DiskNode> = HashMap::new();
         for (node, edge) in edges{
-            let mut disk_node = *seen_disk_node
+            let mut disk_node: Result<DiskNode, GraphErrors> = *seen_disk_node
                 .entry(*node)
-                .or_insert_with(|| self.get_disk_node(node));
+                .or_insert_with(|| match self.get_disk_node(node){
+                    Ok(disk_node) => Ok(disk_node),
+                    Err(e) => Err(GraphError::Db(e)),
+                }
+                );
             if check_node_allocated(&disk_node, FileId::Structure).map_err(|e| { self.poison(); GraphError::from(e) })? {
                 allocated_disk_node(&mut disk_node, &mut self.file_manager_edge_structure, FileId::Structure, &mut super_block, &mut tx).map_err(|e| { self.poison(); GraphError::from(e) })?;            }
 

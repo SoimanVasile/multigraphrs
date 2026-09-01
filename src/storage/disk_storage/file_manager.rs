@@ -1,5 +1,3 @@
-use std::hash::Hash;
-use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 use std::{fs::OpenOptions, path::PathBuf};
@@ -29,8 +27,8 @@ impl ZeroCopyBytes{
 
 #[derive(Debug, Clone)]
 enum FMTypeRequest{
-    Read(/*offset*/ u64, /*length*/ u64, /*buffer*/ Vec<u8>),
-    Write(/*offset*/ u64, /*bytes*/ ZeroCopyBytes)
+    Read(/*length*/ u64, /*buffer*/ Vec<u8>),
+    Write(/*bytes*/ ZeroCopyBytes)
 }
 
 enum FMTypeResponse
@@ -129,9 +127,26 @@ impl FileManager{
     /// # Panics
     /// Panics if `start > end` or if `end` exceeds the actual length of the memory map or if the length
     /// of the bytes is different from the range
-    pub fn writing_bytes_to_mmap(&mut self, start: u64, end: u64,  bytes: &[u8]){
-        todo!()
-        // self.mmap[start as usize .. end as usize].copy_from_slice(bytes);
+    pub fn writing_bytes_to_mmap(&mut self, start: u64, end: u64,  bytes: &[u8]) -> Result<(), DbError>{
+        let (send, receiv) = channel();
+        let pointer = ZeroCopyBytes::new(bytes);
+        let _type = FMTypeRequest::Write(pointer);
+        let request = FMRequest::new(_type, start, send);
+
+        self.sender.send(request).map_err(|_| {
+            DbError::WalThreadDead
+        })?;
+
+        let res = receiv.recv().map_err(|_|{
+            DbError::WalThreadDead
+        })?;
+
+        if let Err(e) = res.status {
+            Err(e)
+        } else{
+            Ok(())
+        }
+
     }
 
     /// Reads a slice of bytes from the memory map.
@@ -141,9 +156,29 @@ impl FileManager{
     ///
     /// # Panics
     /// Panics if the range `[start, end)` is out of bounds for the memory map.
-    pub fn reading_bytes(&self, start: u64, end: u64) -> &[u8]{
-        todo!();
-        // &self.mmap[start as usize .. end as usize]
+    pub fn reading_bytes(&self, start: u64, end: u64, mut buffer: Vec<u8>) -> Result<Vec<u8>, DbError>{
+        buffer.clear();
+        let (send, receiv) = channel();
+
+        let _type = FMTypeRequest::Read(end - start + 1, buffer);
+        let req = FMRequest::new(_type, start, send);
+
+        self.sender.send(req).map_err(|_|{
+            DbError::WalThreadDead
+        })?;
+
+        let res = receiv.recv().map_err(|_|{
+            DbError::WalThreadDead
+        })?;
+
+        if let Err(e) = res.status{
+            Err(e)
+        } else{
+            Ok(match res._type{
+                FMTypeResponse::Read(bytes) => {bytes}
+                _ => {return Err(DbError::WalThreadDead)}
+            })
+        }
     }
 
     /// Reads a mutable slice of bytes from the memory map that can modify the memory-mapped file.
@@ -232,7 +267,7 @@ fn file_manager_worker_thread(file_path: PathBuf, rec: Receiver<FMRequest>){
         .truncate(false)
         .open(file_path).unwrap();
 
-    let mmap = unsafe {
+    let mut mmap = unsafe {
         MmapOptions::new()
             .map_mut(&file)
     }.unwrap();
@@ -249,11 +284,17 @@ fn file_manager_worker_thread(file_path: PathBuf, rec: Receiver<FMRequest>){
 
         for req in requests.into_iter(){
             match req._type{
-                FMTypeRequest::Read(offset, length, mut buffer) => {
+                FMTypeRequest::Read(length, mut buffer) => {
+                    let offset = req.offset;
                     buffer.extend_from_slice(&mmap[offset as usize .. (offset + length) as usize]);
-                    req.sender.send(FMResponse::new(FMTypeResponse::Read(buffer), Ok(())));
+                    req.sender.send(FMResponse::new(FMTypeResponse::Read(buffer), Ok(()))).unwrap();
                 },
-                FMTypeRequest::Write(offset, pointer) => {todo!()},
+                FMTypeRequest::Write(pointer) => {
+                    let offset = req.offset;
+                    let reference = unsafe { &pointer.raw_pointer.as_ref().unwrap()};
+                    mmap[offset as usize .. offset as usize + pointer.length as usize].copy_from_slice(reference);
+                    req.sender.send(FMResponse::new(FMTypeResponse::Write, Ok(()))).unwrap();
+                },
             }
         }
         
