@@ -89,17 +89,18 @@ where
     fn populating(&mut self) -> Result<(), DbError>{
         let mut offset = 0;
         let mut max_data_eof = 0;
+        let mut buf: Vec<u8> = Vec::with_capacity(size_of::<NodeId>());
         while offset < self.file_node_id.file_len()?{
-            let node_id_bytes = self.file_node_id.reading_bytes(offset, offset + size_of::<NodeId>() as u64);
-            let node_id: NodeId = NodeId::from_bytes(node_id_bytes);
+            buf = self.file_node_id.reading_bytes(offset, offset + size_of::<NodeId>() as u64, buf)?;
+            let node_id: NodeId = NodeId::from_bytes(&buf);
                 
             if node_id.data_len == 0{
                 break;
             }
 
             if node_id.data_len != u64::MAX {
-                let bytes = self.file_data.reading_bytes(node_id.data_offset, node_id.data_offset + node_id.data_len);
-                let key = K::from_bytes(bytes);
+                buf = self.file_data.reading_bytes(node_id.data_offset, node_id.data_offset + node_id.data_len, buf)?;
+                let key = K::from_bytes(&buf);
 
                 self.hashing.insert(key, self.calculate_id_from_offset(offset));
                 
@@ -172,6 +173,7 @@ impl<K> DictionaryStrategy<K> for DiskDictionary<K>
 where
     K: Eq + Hash + Clone + AsDiskBytes + FromDiskBytes,
 {
+    type Error = DbError;
     /// Checks if a node exists in the dictionary.
     ///
     /// # Arguments
@@ -259,17 +261,18 @@ where
     fn reverse_node_data(&self, id: u64) -> Option<K> {
         let offset = self.calculate_offset_from_id(id);
 
-        let bytes = self.file_node_id.reading_bytes(offset, offset + std::mem::size_of::<NodeId>() as u64);
-        let node_id = NodeId::from_bytes(bytes);
+        let mut buf = Vec::with_capacity(size_of::<NodeId>());
+        buf = self.file_node_id.reading_bytes(offset, offset + std::mem::size_of::<NodeId>() as u64, buf).unwrap();
+        let node_id = NodeId::from_bytes(&buf);
 
         if node_id.data_len == u64::MAX{
             None
         }else{
             let start = node_id.data_offset;
             let end = start + node_id.data_len;
-            let bytes = self.file_data.reading_bytes(start, end);
+            buf = self.file_data.reading_bytes(start, end, buf).unwrap();
 
-            Some(K::from_bytes(bytes))
+            Some(K::from_bytes(&buf))
         }
     }
 

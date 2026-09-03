@@ -3,7 +3,6 @@ use std::hash::Hash;
 use crate::storage::disk_storage::from_disk_bytes::FromDiskBytes;
 use crate::storage::disk_storage::from_disk_bytes::AsDiskBytes;
 use crate::core::edge::Edge;
-use crate::core::graph_errors::GraphError;
 
 /// Trait abstracting graph storage, allowing both in-memory (RAM) and
 /// disk-backed implementations.
@@ -16,6 +15,7 @@ where
 {
     /// Associated iterator type returned by [`get_edges`](Self::get_edges).
     type EdgeIter<'a>: Iterator<Item=Edge<W>> where Self: 'a, W: 'a, K: 'a;
+    type Error;
 
     /// Appends a clone of `edge` to the adjacency list of `node`, incrementing the internal edge counter.
     ///
@@ -24,11 +24,11 @@ where
     /// * `edge` - The edge containing the target and weight to be cloned and stored.
     ///
     /// # Errors
-    /// Returns a [`GraphError`] if the underlying storage fails to append the edge.
+    /// Returns a [`Self::Error`] if the underlying storage fails to append the edge.
     ///
     /// # Panics
     /// Panics if `node` is out of bounds of the internal storage.
-    fn add_edge_to_node(&mut self, node: &u64, edge: &Edge<W>) -> Result<(), GraphError>;
+    fn add_edge_to_node(&mut self, node: &u64, edge: &Edge<W>) -> Result<(), Self::Error>;
 
     /// Bulk adds multiple edges to their respective nodes.
     ///
@@ -36,17 +36,17 @@ where
     /// * `edges` - A slice of node ID and edge pairs to be inserted in bulk.
     ///
     /// # Errors
-    /// Returns a [`GraphError`] if the underlying storage fails to add the edges.
+    /// Returns a [`Self::Error`] if the underlying storage fails to add the edges.
     ///
     /// # Panics
     /// Panics if any of the provided node IDs are out of bounds.
-    fn bulk_add_edge_to_node(&mut self, edges: &[(u64, Edge<W>)]) -> Result<(), GraphError>;
+    fn bulk_add_edge_to_node(&mut self, edges: &[(u64, Edge<W>)]) -> Result<(), Self::Error>;
 
     /// Creates a new, empty node slot and increments the internal node counter.
     ///
     /// # Errors
-    /// Returns a [`GraphError`] if the underlying storage fails to create a node.
-    fn add_node(&mut self) -> Result<u64, GraphError>;
+    /// Returns a [`Self::Error`] if the underlying storage fails to create a node.
+    fn add_node(&mut self) -> Result<u64, Self::Error>;
 
     /// Bulk adds a specified number of nodes to the storage.
     ///
@@ -54,8 +54,8 @@ where
     /// * `number_of_nodes` - The exact number of node slots to create.
     ///
     /// # Errors
-    /// Returns a [`GraphError`] if the underlying storage fails to create the nodes.
-    fn bulk_add_node(&mut self, number_of_nodes: &u64) -> Result<Vec<u64>, GraphError>;
+    /// Returns a [`Self::Error`] if the underlying storage fails to create the nodes.
+    fn bulk_add_node(&mut self, number_of_nodes: &u64) -> Result<Vec<u64>, Self::Error>;
 
     /// Returns the number of outgoing edges for `node`.
     ///
@@ -64,7 +64,7 @@ where
     ///
     /// # Panics
     /// Panics if `node` is out of bounds.
-    fn node_len(&self, node: &u64) -> usize;
+    fn node_len(&self, node: &u64) -> Result<usize, Self::Error>;
 
     /// Returns an iterator that yields cloned `Edge<W>` values for all outgoing edges of `node`.
     ///
@@ -82,11 +82,11 @@ where
     /// * `edge` - The edge containing the target and weight to match for removal.
     ///
     /// # Errors
-    /// Returns a [`GraphError::EdgeDoesntExist`] if the edge doesn't exist, or another [`GraphError`] on backend failure.
+    /// Returns a [`Self::Error::EdgeDoesntExist`] if the edge doesn't exist, or another [`Self::Error`] on backend failure.
     ///
     /// # Panics
     /// Panics if `source` is out of bounds.
-    fn remove_edge(&mut self, source: &u64, edge: &Edge<W>) -> Result<Edge<W>, GraphError>;
+    fn remove_edge(&mut self, source: &u64, edge: &Edge<W>) -> Result<Edge<W>, Self::Error>;
 
     /// Bulk removes the edges in the `edges` array which the target and weight match.
     ///
@@ -94,11 +94,11 @@ where
     /// * `edges` - A slice of node ID and edge pairs specifying the edges to remove.
     ///
     /// # Errors
-    /// Returns a [`GraphError`] if the underlying storage fails to remove the edges.
+    /// Returns a [`Self::Error`] if the underlying storage fails to remove the edges.
     ///
     /// # Panics
     /// Panics if any source node is out of bounds.
-    fn bulk_remove_edge(&mut self, edges: &[(u64, Edge<W>)]) -> Result<(), GraphError>;
+    fn bulk_remove_edge(&mut self, edges: &[(u64, Edge<W>)]) -> Result<(), Self::Error>;
 
     /// Removes the first edge from `source` for which `func(edge, candidate)` returns `true`, using swap-remove semantics.
     ///
@@ -108,11 +108,11 @@ where
     /// * `func` - The closure used to determine if a candidate edge matches.
     ///
     /// # Errors
-    /// Returns a [`GraphError::EdgeDoesntExist`] if no edge matches, or another [`GraphError`] on backend failure.
+    /// Returns a [`Self::Error::EdgeDoesntExist`] if no edge matches, or another [`Self::Error`] on backend failure.
     ///
     /// # Panics
     /// Panics if `source` is out of bounds.
-    fn remove_edge_by_property<F>(&mut self, source: &u64, edge: &Edge<W>, func: F) -> Result<Edge<W>, GraphError>
+    fn remove_edge_by_property<F>(&mut self, source: &u64, edge: &Edge<W>, func: F) -> Result<Edge<W>, Self::Error>
     where
         F: Fn(&Edge<W>, &Edge<W>) -> bool;
 
@@ -123,24 +123,24 @@ where
     /// * `target` - The target node ID where the edge ends.
     ///
     /// # Errors
-    /// Returns a [`GraphError::EdgeDoesntExist`] if no such edge exists, or another [`GraphError`] on backend failure.
+    /// Returns a [`Self::Error::EdgeDoesntExist`] if no such edge exists, or another [`Self::Error`] on backend failure.
     ///
     /// # Panics
     /// Panics if `source` is out of bounds.
-    fn contains_edge(&self, source: &u64, target: &u64) -> Result<Edge<W>, GraphError>;
+    fn contains_edge(&self, source: &u64, target: &u64) -> Result<Edge<W>, Self::Error>;
 
     /// Returns the total node count.
-    fn node_count(&self) -> usize;
+    fn node_count(&self) -> Result<usize, Self::Error>;
 
     /// Returns the total edge count.
-    fn edge_count(&self) -> usize;
+    fn edge_count(&self) -> Result<usize, Self::Error>;
 
     /// Increments the internal node counter without allocating a new slot.
     /// Used when re-adding a node to a previously freed ID.
     ///
     /// # Errors
-    /// Returns a [`GraphError`] on backend failure.
-    fn increment_node_counter(&mut self) -> Result<(), GraphError>;
+    /// Returns a [`Self::Error`] on backend failure.
+    fn increment_node_counter(&mut self) -> Result<(), Self::Error>;
 
     // --- Primitives for strategy-driven remove_node ---
 
@@ -150,11 +150,11 @@ where
     /// * `node` - The internal node ID whose edges will be cleared.
     ///
     /// # Errors
-    /// Returns a [`GraphError`] on backend failure.
+    /// Returns a [`Self::Error`] on backend failure.
     ///
     /// # Panics
     /// Panics if `node` is out of bounds.
-    fn clear_node_edges(&mut self, node: &u64) -> Result<(), GraphError>;
+    fn clear_node_edges(&mut self, node: &u64) -> Result<(), Self::Error>;
 
     /// Removes the first edge from `source` that points to `target`, updating the edge count.
     ///
@@ -163,11 +163,11 @@ where
     /// * `target` - The internal node ID to which the edge points.
     ///
     /// # Errors
-    /// Returns a [`GraphError`] on backend failure.
+    /// Returns a [`Self::Error`] on backend failure.
     ///
     /// # Panics
     /// Panics if `source` is out of bounds.
-    fn remove_edge_by_target(&mut self, source: &u64, target: &u64) -> Result<(), GraphError>;
+    fn remove_edge_by_target(&mut self, source: &u64, target: &u64) -> Result<(), Self::Error>;
 
     /// Records that `source` has an incoming edge from `origin` (reverse index).
     ///
@@ -176,11 +176,11 @@ where
     /// * `origin` - The internal node ID that originates the edge.
     ///
     /// # Errors
-    /// Returns a [`GraphError`] on backend failure.
+    /// Returns a [`Self::Error`] on backend failure.
     ///
     /// # Panics
     /// Panics if `source` is out of bounds.
-    fn add_reverse_edge(&mut self, source: &u64, origin: &u64) -> Result<(), GraphError>;
+    fn add_reverse_edge(&mut self, source: &u64, origin: &u64) -> Result<(), Self::Error>;
 
     /// Bulk adds reverse edge records.
     ///
@@ -188,11 +188,11 @@ where
     /// * `edges` - A slice of tuples containing the source, target, and weight of the edges to reverse-index.
     ///
     /// # Errors
-    /// Returns a [`GraphError`] on backend failure.
+    /// Returns a [`Self::Error`] on backend failure.
     ///
     /// # Panics
     /// Panics if any of the target node ids are out of bounds.
-    fn bulk_add_reverse_edge(&mut self, edges: &[(u64, u64, W)]) -> Result<(), GraphError>;
+    fn bulk_add_reverse_edge(&mut self, edges: &[(u64, u64, W)]) -> Result<(), Self::Error>;
 
     /// Returns all node IDs that have outgoing edges pointing to `node`.
     ///
@@ -201,7 +201,7 @@ where
     ///
     /// # Panics
     /// Panics if `node` is out of bounds.
-    fn get_reverse_edges(&self, node: &u64) -> Vec<u64>;
+    fn get_reverse_edges(&self, node: &u64) -> Result<Vec<u64>, Self::Error>;
 
     /// Clears the reverse edge list for a node.
     ///
@@ -209,11 +209,11 @@ where
     /// * `node` - The internal node ID whose reverse edges will be cleared.
     ///
     /// # Errors
-    /// Returns a [`GraphError`] on backend failure.
+    /// Returns a [`Self::Error`] on backend failure.
     ///
     /// # Panics
     /// Panics if `node` is out of bounds.
-    fn clear_reverse_edges(&mut self, node: &u64) -> Result<(), GraphError>;
+    fn clear_reverse_edges(&mut self, node: &u64) -> Result<(), Self::Error>;
 
     /// Removes a single reverse entry where `origin` no longer points to `source`.
     ///
@@ -222,11 +222,11 @@ where
     /// * `origin` - The internal node ID that was originating the edge.
     ///
     /// # Errors
-    /// Returns a [`GraphError`] on backend failure.
+    /// Returns a [`Self::Error`] on backend failure.
     ///
     /// # Panics
     /// Panics if `source` is out of bounds.
-    fn remove_reverse_edge(&mut self, source: &u64, origin: &u64) -> Result<(), GraphError>;
+    fn remove_reverse_edge(&mut self, source: &u64, origin: &u64) -> Result<(), Self::Error>;
 
     /// Bulk removes reverse edge records.
     ///
@@ -234,11 +234,11 @@ where
     /// * `edges` - A slice of tuples containing the source and origin of the reverse edges to remove.
     ///
     /// # Errors
-    /// Returns a [`GraphError`] on backend failure.
+    /// Returns a [`Self::Error`] on backend failure.
     ///
     /// # Panics
     /// Panics if `source` is out of bounds.
-    fn bulk_remove_reverse_edge(&mut self, edges: &[(u64, u64)]) -> Result<(), GraphError>;
+    fn bulk_remove_reverse_edge(&mut self, edges: &[(u64, u64)]) -> Result<(), Self::Error>;
 
     /// Decrements the node counter and marks the ID as free.
     ///
@@ -246,18 +246,18 @@ where
     /// * `node_id` - The internal node ID to free.
     ///
     /// # Errors
-    /// Returns a [`GraphError`] on backend failure.
-    fn free_node_id(&mut self, node_id: &u64) -> Result<(), GraphError>;
+    /// Returns a [`Self::Error`] on backend failure.
+    fn free_node_id(&mut self, node_id: &u64) -> Result<(), Self::Error>;
 
-    fn hashed_nodes_contains_key(&self, key: &K) -> Result<bool, GraphError>;
+    fn hashed_nodes_contains_key(&self, key: &K) -> Result<bool, Self::Error>;
 
-    fn hashed_nodes_insert(&mut self, key: K, node_id: u64) -> Result<(), GraphError>;
+    fn hashed_nodes_insert(&mut self, key: K, node_id: u64) -> Result<(), Self::Error>;
 
-    fn hashed_nodes_get(&self,  key: &K) -> Result<Option<u64>, GraphError>;
+    fn hashed_nodes_get(&self,  key: &K) -> Result<Option<u64>, Self::Error>;
 
-    fn hashed_nodes_remove(&mut self, key: &K) -> Result<Option<u64>, GraphError>;
+    fn hashed_nodes_remove(&mut self, key: &K) -> Result<Option<u64>, Self::Error>;
 
     fn reverse_hashing_get_node_data(&self, id: u64) -> Option<K>;
 
-    fn hashed_nodes_bulk_insert(&mut self, nodes: &[(K, u64)]) -> Result<(), GraphError>;
+    fn hashed_nodes_bulk_insert(&mut self, nodes: &[(K, u64)]) -> Result<(), Self::Error>;
 }

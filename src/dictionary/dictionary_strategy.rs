@@ -1,4 +1,3 @@
-use crate::core::db_error::DbError;
 use crate::storage::disk_storage::from_disk_bytes::FromDiskBytes;
 use crate::storage::disk_storage::from_disk_bytes::AsDiskBytes;
 use std::hash::Hash;
@@ -10,6 +9,7 @@ pub trait DictionaryStrategy<K>
 where
     K: Clone + Hash + Eq + AsDiskBytes + FromDiskBytes
 {
+    type Error;
 
     /// Checks if a node exists in the graph.
     ///
@@ -24,8 +24,8 @@ where
     /// * `node_id` - The internal ID to associate with the node data.
     ///
     /// # Errors
-    /// Returns a [`DbError`] if an underlying storage operation fails during insertion.
-    fn insert ( &mut self, key: K, node_id: u64) -> Result<Option<u64>, DbError>;
+    /// Returns a [`Self::Error`] if an underlying storage operation fails during insertion.
+    fn insert ( &mut self, key: K, node_id: u64) -> Result<Option<u64>, Self::Error>;
 
     /// Retrieves the internal ID of a node for use inside the graph engine.
     ///
@@ -39,10 +39,10 @@ where
     /// * `key` - The node data to remove from the dictionary.
     ///
     /// # Errors
-    /// Returns a [`DbError`] if an underlying storage operation fails during removal.
-    fn remove(&mut self, key: &K ) -> Result<Option<u64>, DbError>;
+    /// Returns a [`Self::Error`] if an underlying storage operation fails during removal.
+    fn remove(&mut self, key: &K ) -> Result<Option<u64>, Self::Error>;
 
     fn reverse_node_data(&self, id: u64) -> Option<K>;
 
-    fn bulk_insert(&mut self, nodes: &[(K, u64)]) -> Result<(), DbError>;
+    fn bulk_insert(&mut self, nodes: &[(K, u64)]) -> Result<(), Self::Error>;
 }
