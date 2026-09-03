@@ -41,20 +41,20 @@ impl Drop for TempDiskStorage {
 fn test_add_node_increases_node_count() {
     let mut temp = TempDiskStorage::new("add_node");
     
-    assert_eq!(temp.storage.node_count(), 0, "Initial node count should be 0");
+    assert_eq!(temp.storage.node_count().unwrap(), 0, "Initial node count should be 0");
     temp.storage.add_node().unwrap();
-    assert_eq!(temp.storage.node_count(), 1, "Node count should increment after add_node");
+    assert_eq!(temp.storage.node_count().unwrap(), 1, "Node count should increment after add_node");
     temp.storage.add_node().unwrap();
-    assert_eq!(temp.storage.node_count(), 2, "Node count should be 2 after second add_node");
+    assert_eq!(temp.storage.node_count().unwrap(), 2, "Node count should be 2 after second add_node");
 }
 
 #[test]
 fn test_increment_node_counter() {
     let mut temp = TempDiskStorage::new("inc_node");
     
-    assert_eq!(temp.storage.node_count(), 0);
+    assert_eq!(temp.storage.node_count().unwrap(), 0);
     temp.storage.increment_node_counter().unwrap();
-    assert_eq!(temp.storage.node_count(), 1, "Incrementing node counter should update the internal count");
+    assert_eq!(temp.storage.node_count().unwrap(), 1, "Incrementing node counter should update the internal count");
 }
 
 #[test]
@@ -63,15 +63,15 @@ fn test_add_edge_to_node_and_counts() {
     temp.storage.add_node().unwrap(); // node 0
     temp.storage.add_node().unwrap(); // node 1
 
-    assert_eq!(temp.storage.edge_count(), 0);
-    assert_eq!(temp.storage.node_len(&0), 0);
+    assert_eq!(temp.storage.edge_count().unwrap(), 0);
+    assert_eq!(temp.storage.node_len(&0).unwrap(), 0);
 
     let edge = Edge::new(1, &42);
     temp.storage.add_edge_to_node(&0, &edge).unwrap();
 
-    assert_eq!(temp.storage.edge_count(), 1, "Global edge count should increment");
-    assert_eq!(temp.storage.node_len(&0), 1, "Source node length should increment");
-    assert_eq!(temp.storage.node_len(&1), 0, "Target node length should remain 0 for directed addition");
+    assert_eq!(temp.storage.edge_count().unwrap(), 1, "Global edge count should increment");
+    assert_eq!(temp.storage.node_len(&0).unwrap(), 1, "Source node length should increment");
+    assert_eq!(temp.storage.node_len(&1).unwrap(), 0, "Target node length should remain 0 for directed addition");
 }
 
 #[test]
@@ -120,16 +120,16 @@ fn test_remove_edge() {
     let edge = Edge::new(1, &42);
     temp.storage.add_edge_to_node(&0, &edge).unwrap();
     
-    assert_eq!(temp.storage.edge_count(), 1);
-    assert_eq!(temp.storage.node_len(&0), 1);
+    assert_eq!(temp.storage.edge_count().unwrap(), 1);
+    assert_eq!(temp.storage.node_len(&0).unwrap(), 1);
 
     // Remove the edge
     let res = temp.storage.remove_edge(&0, &edge);
     assert!(res.is_ok(), "Removing an existing edge should succeed");
     
     // Edge is logically removed
-    assert_eq!(temp.storage.edge_count(), 0, "Edge count should drop to 0");
-    assert_eq!(temp.storage.node_len(&0), 0, "Node's edge length should drop to 0");
+    assert_eq!(temp.storage.edge_count().unwrap(), 0, "Edge count should drop to 0");
+    assert_eq!(temp.storage.node_len(&0).unwrap(), 0, "Node's edge length should drop to 0");
     assert!(temp.storage.contains_edge(&0, &1).is_err(), "Contains should now return false (Err)");
 }
 
@@ -145,11 +145,11 @@ fn test_remove_edge_by_target() {
     temp.storage.add_edge_to_node(&0, &edge1).unwrap();
     temp.storage.add_edge_to_node(&0, &edge2).unwrap();
 
-    assert_eq!(temp.storage.node_len(&0), 2);
+    assert_eq!(temp.storage.node_len(&0).unwrap(), 2);
 
     temp.storage.remove_edge_by_target(&0, &1).unwrap();
 
-    assert_eq!(temp.storage.node_len(&0), 1, "Node should have 1 edge after removal");
+    assert_eq!(temp.storage.node_len(&0).unwrap(), 1, "Node should have 1 edge after removal");
     assert!(temp.storage.contains_edge(&0, &1).is_err(), "Removed edge should no longer exist");
     assert!(temp.storage.contains_edge(&0, &2).is_ok(), "Other edge should still exist");
 }
@@ -167,11 +167,11 @@ fn test_clear_node_edges() {
     temp.storage.add_edge_to_node(&0, &edge1).unwrap();
     temp.storage.add_edge_to_node(&0, &edge2).unwrap();
     
-    assert_eq!(temp.storage.node_len(&0), 2);
+    assert_eq!(temp.storage.node_len(&0).unwrap(), 2);
 
     temp.storage.clear_node_edges(&0).unwrap();
 
-    assert_eq!(temp.storage.node_len(&0), 0, "Cleared node should have 0 edges");
+    assert_eq!(temp.storage.node_len(&0).unwrap(), 0, "Cleared node should have 0 edges");
     let edges: Vec<_> = temp.storage.get_edges(&0).collect();
     assert!(edges.is_empty(), "Cleared node should yield 0 edges on iteration");
 }
@@ -186,7 +186,7 @@ fn test_add_reverse_edge() {
     temp.storage.add_edge_to_node(&0, &edge).unwrap();
     temp.storage.add_reverse_edge(&1, &0).unwrap();
 
-    let reverse = temp.storage.get_reverse_edges(&1);
+    let reverse = temp.storage.get_reverse_edges(&1).unwrap();
     assert_eq!(reverse.len(), 1, "Should have 1 reverse edge");
     assert_eq!(reverse[0], 0, "Reverse edge should point back to source");
 }
@@ -210,7 +210,7 @@ fn test_get_reverse_edges() {
     temp.storage.add_reverse_edge(&2, &1).unwrap();
     temp.storage.add_reverse_edge(&2, &3).unwrap();
 
-    let reverse = temp.storage.get_reverse_edges(&2);
+    let reverse = temp.storage.get_reverse_edges(&2).unwrap();
     println!("{:?}", reverse);
     assert_eq!(reverse.len(), 3, "Node 2 should have 2 reverse edges");
     assert!(reverse.contains(&0), "Reverse edges should contain node 0");
@@ -240,7 +240,7 @@ fn test_reverse_edge_reallocation_single() {
         temp.storage.add_reverse_edge(&0, &src).unwrap();
     }
 
-    let reverse = temp.storage.get_reverse_edges(&0);
+    let reverse = temp.storage.get_reverse_edges(&0).unwrap();
     assert_eq!(
         reverse.len(),
         total_sources as usize,
@@ -274,7 +274,7 @@ fn test_reverse_edge_reallocation_double() {
         temp.storage.add_reverse_edge(&0, &src).unwrap();
     }
 
-    let reverse = temp.storage.get_reverse_edges(&0);
+    let reverse = temp.storage.get_reverse_edges(&0).unwrap();
     assert_eq!(
         reverse.len(),
         total_sources as usize,
@@ -310,7 +310,7 @@ fn test_remove_reverse_edge_after_reallocation() {
     temp.storage.remove_reverse_edge(&0, &65).unwrap();  // remove one in the middle
     temp.storage.remove_reverse_edge(&0, &130).unwrap(); // remove last added
 
-    let reverse = temp.storage.get_reverse_edges(&0);
+    let reverse = temp.storage.get_reverse_edges(&0).unwrap();
     assert_eq!(
         reverse.len(),
         (total_sources - 3) as usize,
@@ -344,13 +344,13 @@ fn test_forward_edge_reallocation() {
 
     // Verify counts.
     assert_eq!(
-        temp.storage.node_len(&0),
+        temp.storage.node_len(&0).unwrap(),
         total_targets as usize,
         "Node 0 should report {} edges after reallocation",
         total_targets
     );
     assert_eq!(
-        temp.storage.edge_count(),
+        temp.storage.edge_count().unwrap(),
         total_targets as usize,
         "Global edge count should match"
     );
@@ -390,7 +390,7 @@ fn test_remove_forward_edge_after_reallocation() {
     temp.storage.remove_edge_by_target(&0, &50).unwrap();
 
     assert_eq!(
-        temp.storage.node_len(&0),
+        temp.storage.node_len(&0).unwrap(),
         (total_targets - 3) as usize,
         "Edge count should reflect 3 removals"
     );
@@ -427,7 +427,7 @@ fn test_multiple_nodes_reverse_reallocation() {
 
     // Verify each target node's reverse edges are intact and non-overlapping.
     for target in 0..target_nodes {
-        let reverse = temp.storage.get_reverse_edges(&target);
+        let reverse = temp.storage.get_reverse_edges(&target).unwrap();
         assert_eq!(
             reverse.len(),
             edges_per_node as usize,
@@ -487,7 +487,7 @@ fn test_independent_forward_and_reverse_reallocation() {
     }
 
     // Verify reverse edges on node 1.
-    let rev_edges = temp.storage.get_reverse_edges(&1);
+    let rev_edges = temp.storage.get_reverse_edges(&1).unwrap();
     assert_eq!(rev_edges.len(), reverse_count as usize);
     for src in 2..2 + reverse_count {
         assert!(
@@ -507,7 +507,7 @@ fn test_empty_node_iteration() {
 
     let edges: Vec<_> = temp.storage.get_edges(&0).collect();
     assert!(edges.is_empty(), "Node with no edges should yield empty iterator");
-    assert_eq!(temp.storage.node_len(&0), 0, "Node with no edges should have length 0");
+    assert_eq!(temp.storage.node_len(&0).unwrap(), 0, "Node with no edges should have length 0");
 }
 
 /// Initial capacity is 256 bytes. DiskEdge is 24 bytes.
@@ -526,7 +526,7 @@ fn test_boundary_capacity_forward_edges() {
         let edge = Edge::new(target, &(target as u32));
         temp.storage.add_edge_to_node(&0, &edge).unwrap();
     }
-    assert_eq!(temp.storage.node_len(&0), 10);
+    assert_eq!(temp.storage.node_len(&0).unwrap(), 10);
 
     // Verify all 10 are readable
     let edges: Vec<_> = temp.storage.get_edges(&0).collect();
@@ -543,8 +543,8 @@ fn test_boundary_capacity_forward_edges() {
     let edge = Edge::new(11, &11u32);
     temp.storage.add_edge_to_node(&0, &edge).unwrap();
 
-    assert_eq!(temp.storage.node_len(&0), 11);
-    assert_eq!(temp.storage.edge_count(), 11);
+    assert_eq!(temp.storage.node_len(&0).unwrap(), 11);
+    assert_eq!(temp.storage.edge_count().unwrap(), 11);
 
     // All 11 should survive
     let edges: Vec<_> = temp.storage.get_edges(&0).collect();
@@ -573,7 +573,7 @@ fn test_boundary_capacity_reverse_edges() {
     for src in 1..=32 {
         temp.storage.add_reverse_edge(&0, &src).unwrap();
     }
-    let reverse = temp.storage.get_reverse_edges(&0);
+    let reverse = temp.storage.get_reverse_edges(&0).unwrap();
     assert_eq!(reverse.len(), 32, "32 reverse edges should fit in initial capacity");
     for src in 1..=32u64 {
         assert!(reverse.contains(&src), "Reverse edge from {} should exist", src);
@@ -581,7 +581,7 @@ fn test_boundary_capacity_reverse_edges() {
 
     // Add 33rd (triggers realloc)
     temp.storage.add_reverse_edge(&0, &33).unwrap();
-    let reverse = temp.storage.get_reverse_edges(&0);
+    let reverse = temp.storage.get_reverse_edges(&0).unwrap();
     assert_eq!(reverse.len(), 33, "33rd reverse edge should survive realloc");
     for src in 1..=33u64 {
         assert!(reverse.contains(&src), "Reverse edge from {} should survive realloc", src);
@@ -596,11 +596,11 @@ fn test_many_nodes_with_no_edges() {
         temp.storage.add_node().unwrap();
     }
 
-    assert_eq!(temp.storage.node_count(), 100);
-    assert_eq!(temp.storage.edge_count(), 0);
+    assert_eq!(temp.storage.node_count().unwrap(), 100);
+    assert_eq!(temp.storage.edge_count().unwrap(), 0);
 
     for node in 0..100u64 {
-        assert_eq!(temp.storage.node_len(&node), 0, "Node {} should have 0 edges", node);
+        assert_eq!(temp.storage.node_len(&node).unwrap(), 0, "Node {} should have 0 edges", node);
         let edges: Vec<_> = temp.storage.get_edges(&node).collect();
         assert!(edges.is_empty(), "Node {} should yield empty iterator", node);
     }
@@ -614,7 +614,7 @@ fn test_single_node_self_edge() {
     let edge = Edge::new(0, &99u32);
     temp.storage.add_edge_to_node(&0, &edge).unwrap();
 
-    assert_eq!(temp.storage.node_len(&0), 1);
+    assert_eq!(temp.storage.node_len(&0).unwrap(), 1);
     let edges: Vec<_> = temp.storage.get_edges(&0).collect();
     assert_eq!(edges.len(), 1);
     assert_eq!(edges[0].get_target(), 0);
@@ -622,7 +622,7 @@ fn test_single_node_self_edge() {
 
     // Remove self-loop
     temp.storage.remove_edge_by_target(&0, &0).unwrap();
-    assert_eq!(temp.storage.node_len(&0), 0);
+    assert_eq!(temp.storage.node_len(&0).unwrap(), 0);
 }
 
 // ── Stress/Correctness After Multiple Removes ───────────────────────────
@@ -640,17 +640,17 @@ fn test_add_remove_add_edges_repeatedly() {
         let edge = Edge::new(target, &(target as u32 * 10));
         temp.storage.add_edge_to_node(&0, &edge).unwrap();
     }
-    assert_eq!(temp.storage.node_len(&0), 4);
+    assert_eq!(temp.storage.node_len(&0).unwrap(), 4);
 
     // Remove edge 0->2
     temp.storage.remove_edge_by_target(&0, &2).unwrap();
-    assert_eq!(temp.storage.node_len(&0), 3);
+    assert_eq!(temp.storage.node_len(&0).unwrap(), 3);
     assert!(temp.storage.contains_edge(&0, &2).is_err(), "Edge 0->2 should be removed");
 
     // Re-add edge 0->2 with different weight
     let edge = Edge::new(2, &200u32);
     temp.storage.add_edge_to_node(&0, &edge).unwrap();
-    assert_eq!(temp.storage.node_len(&0), 4);
+    assert_eq!(temp.storage.node_len(&0).unwrap(), 4);
 
     let found = temp.storage.contains_edge(&0, &2);
     assert!(found.is_ok(), "Edge 0->2 should exist again");
@@ -668,15 +668,15 @@ fn test_clear_then_readd_edges() {
     let edge2 = Edge::new(2, &100u32);
     temp.storage.add_edge_to_node(&0, &edge1).unwrap();
     temp.storage.add_edge_to_node(&0, &edge2).unwrap();
-    assert_eq!(temp.storage.node_len(&0), 2);
+    assert_eq!(temp.storage.node_len(&0).unwrap(), 2);
 
     temp.storage.clear_node_edges(&0).unwrap();
-    assert_eq!(temp.storage.node_len(&0), 0);
+    assert_eq!(temp.storage.node_len(&0).unwrap(), 0);
 
     // Re-add a new edge
     let edge3 = Edge::new(1, &999u32);
     temp.storage.add_edge_to_node(&0, &edge3).unwrap();
-    assert_eq!(temp.storage.node_len(&0), 1);
+    assert_eq!(temp.storage.node_len(&0).unwrap(), 1);
 
     let edges: Vec<_> = temp.storage.get_edges(&0).collect();
     assert_eq!(edges.len(), 1);
@@ -700,7 +700,7 @@ fn test_swap_remove_preserves_other_edges() {
 
     // Remove 0->3
     temp.storage.remove_edge_by_target(&0, &3).unwrap();
-    assert_eq!(temp.storage.node_len(&0), 4);
+    assert_eq!(temp.storage.node_len(&0).unwrap(), 4);
 
     // Verify remaining edges contain exactly {1, 2, 4, 5} by content
     let edges: Vec<_> = temp.storage.get_edges(&0).collect();
@@ -716,7 +716,7 @@ fn test_swap_remove_preserves_other_edges() {
 
     // Remove 0->1
     temp.storage.remove_edge_by_target(&0, &1).unwrap();
-    assert_eq!(temp.storage.node_len(&0), 3);
+    assert_eq!(temp.storage.node_len(&0).unwrap(), 3);
 
     let edges: Vec<_> = temp.storage.get_edges(&0).collect();
     let mut targets: Vec<u64> = edges.iter().map(|e| e.get_target()).collect();
@@ -739,7 +739,7 @@ fn test_remove_reverse_edge_preserves_others() {
 
     // Remove reverse edge from 2
     temp.storage.remove_reverse_edge(&0, &2).unwrap();
-    let reverse = temp.storage.get_reverse_edges(&0);
+    let reverse = temp.storage.get_reverse_edges(&0).unwrap();
     assert_eq!(reverse.len(), 3);
     let mut sorted = reverse.clone();
     sorted.sort();
@@ -747,7 +747,7 @@ fn test_remove_reverse_edge_preserves_others() {
 
     // Remove reverse edge from 4
     temp.storage.remove_reverse_edge(&0, &4).unwrap();
-    let reverse = temp.storage.get_reverse_edges(&0);
+    let reverse = temp.storage.get_reverse_edges(&0).unwrap();
     assert_eq!(reverse.len(), 2);
     let mut sorted = reverse.clone();
     sorted.sort();
