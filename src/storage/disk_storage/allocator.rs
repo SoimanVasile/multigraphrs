@@ -76,7 +76,7 @@ impl<'a> AllocatedStruct<'a>
     /// Retrieves the free-list header offset for the given bucket index.
     ///
     /// # Arguments
-    /// * `index` - The bucket index to look up the head offset for.
+    /// * `index` - The bucket index to look up the head oRUST_BACKTRACE=1 ffset for.
     ///
     /// # Panics
     /// Panics if the `file_id` is not `Structure` or `Reverse`.
@@ -220,12 +220,14 @@ impl<'a> AllocatedStruct<'a>
 
             buf = self.file_manager.reading_bytes(offset_free_memory, offset_free_memory + size_of::<DiskEdge>() as u64, buf)?;
 
+            println!("{:?}",  buf);
+            println!("BUF LENGTH = {}", buf.len());
             let disk_edge: DiskEdge = *bytemuck::from_bytes(&buf);
 
             if let Some(ref mut t) = self.tx {
                 t.zero_mmap(self.file_id, offset_free_memory, offset_free_memory + *size);
             } else {
-                self.file_manager.zeroing_mmap(offset_free_memory, offset_free_memory + *size);
+                self.file_manager.zeroing_mmap(offset_free_memory, offset_free_memory + *size)?;
             }
             let next_offset = disk_edge.weight_offset;
             self.set_header(&index, &next_offset);
@@ -264,11 +266,11 @@ impl<'a> AllocatedStruct<'a>
                 let cur_disk_edge: DiskEdge = *bytemuck::from_bytes(&buf);
 
                 if cur_disk_edge.weight_len >= *size{
-                    self.skip_cur(&prev_offset, &cur_offset);
+                    self.skip_cur(&prev_offset, &cur_offset)?;
                     if let Some(ref mut t) = self.tx {
                         t.zero_mmap(self.file_id, cur_offset, cur_offset + *size);
                     } else {
-                        self.file_manager.zeroing_mmap(cur_offset, cur_offset + *size);
+                        self.file_manager.zeroing_mmap(cur_offset, cur_offset + *size)?;
                     }
                     if cur_disk_edge.weight_len > *size{
                         let new_offset = cur_offset + *size;
@@ -461,6 +463,7 @@ mod tests {
         write_free_block(&mut fm, 0, 256, 128);
         sb.next_header_structure(&0, &0);
 
+        println!("NIGGER");
         let mut alloc = AllocatedStruct::new(&mut fm, &mut sb, None, FileId::Structure);
 
         let offset = alloc.allocate_structure(&128).unwrap();
@@ -474,7 +477,7 @@ mod tests {
         let (mut fm, mut sb, _tmp) = setup();
 
         // Fill offset 0..128 with non-zero data, then place a free block header there
-        fm.writing_bytes_to_mmap(0, 128, &[0xFF; 128]);
+        fm.writing_bytes_to_mmap(0, 128, &[0xFF; 128]).unwrap();
         write_free_block(&mut fm, 0, u64::MAX, 128);
         sb.next_header_structure(&0, &0);
 

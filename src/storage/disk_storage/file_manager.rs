@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 use std::{fs::OpenOptions, path::PathBuf};
@@ -28,13 +29,17 @@ impl ZeroCopyBytes{
 #[derive(Debug, Clone)]
 enum FMTypeRequest{
     Read(/*length*/ u64, /*buffer*/ Vec<u8>),
-    Write(/*bytes*/ ZeroCopyBytes)
+    Write(/*bytes*/ ZeroCopyBytes),
+    IncreaseFileSize(u64),
+    Flush,
 }
 
 enum FMTypeResponse
 {
     Read(Vec<u8>),
     Write,
+    IncreaseFileSize { cur_file_size: u64},
+    Flush,
 }
 
 pub struct FMResponse
@@ -67,6 +72,7 @@ impl<'a> FMRequest{
 #[derive(Debug)]
 pub struct FileManager{
     sender: Sender<FMRequest>,
+    len: u64,
 }
 
 impl FileManager{
@@ -96,7 +102,7 @@ impl FileManager{
             file_manager_worker_thread(file_path, request);
         });
 
-        Ok((Self{sender}, created))
+        Ok((Self{sender, len: file.metadata().unwrap().len()}, created))
     }
 
     
@@ -109,8 +115,8 @@ impl FileManager{
     ///
     /// # Panics
     /// Panics if `start > end` or if `end` exceeds the actual length of the memory map.
-    pub fn zeroing_mmap(&mut self, start: u64, end: u64){
-        todo!()
+    pub fn zeroing_mmap(&mut self, start: u64, end: u64) -> Result<(), DbError>{
+        self.writing_bytes_to_mmap(start, end, &vec![0; (end-start) as usize])
         // self.mmap[start as usize .. end as usize].fill(0);
     }
 
@@ -127,7 +133,7 @@ impl FileManager{
     /// # Panics
     /// Panics if `start > end` or if `end` exceeds the actual length of the memory map or if the length
     /// of the bytes is different from the range
-    pub fn writing_bytes_to_mmap(&mut self, start: u64, end: u64,  bytes: &[u8]) -> Result<(), DbError>{
+    pub fn writing_bytes_to_mmap(&mut self, start: u64, _end: u64,  bytes: &[u8]) -> Result<(), DbError>{
         let (send, receiv) = channel();
         let pointer = ZeroCopyBytes::new(bytes);
         let _type = FMTypeRequest::Write(pointer);
@@ -160,7 +166,7 @@ impl FileManager{
         buffer.clear();
         let (send, receiv) = channel();
 
-        let _type = FMTypeRequest::Read(end - start + 1, buffer);
+        let _type = FMTypeRequest::Read(end - start, buffer);
         let req = FMRequest::new(_type, start, send);
 
         self.sender.send(req).map_err(|_|{
@@ -188,18 +194,10 @@ impl FileManager{
     ///
     /// # Panics
     /// Panics if the range `[start, end)` is out of bounds for the memory map.
-    pub fn reading_bytes_mut(&mut self, start: u64, end: u64) -> &mut [u8] {
-        todo!();
+    // pub fn reading_bytes_mut(&mut self, start: u64, end: u64) -> &mut [u8] {
+    //     todo!();
         // &mut self.mmap[start as usize .. end as usize]
-    }
-
-    /// Returns a raw mutable pointer to the underlying memory map. Provides access that can mutate the memory-mapped file.
-    pub fn mmap_ptr_mut(&mut self) -> *mut u8 {
-        todo!()
-        // self.mmap.as_mut_ptr()
-    }
-
-
+    // }
 
     /// Copies data within the memory map from a source range to a destination offset, which will eventually be flushed to disk.
     ///
@@ -218,8 +216,28 @@ impl FileManager{
     ///
     /// # Errors
     /// Returns a [`DbError`] if file metadata cannot be read, resizing fails, or mapping fails.
-    pub fn increase_file_size(&mut self) -> Result<(), DbError>{
-        todo!()
+    pub fn increase_file_size(&mut self) -> Result<u64, DbError>{
+        let _type = FMTypeRequest::IncreaseFileSize(self.check_next_size(self.file_len()?)?);
+        let (sender, recv) = channel();
+        let request = FMRequest::new(_type, u64::MAX, sender);
+
+        self.sender.send(request).map_err(|_| {
+            DbError::WalThreadDead
+        })?;
+
+        let response = recv.recv()?;
+        
+        if let Err(e) = response.status{
+            Err(e)
+        }else{
+            let cur_file_size = match response._type{
+                FMTypeResponse::IncreaseFileSize { cur_file_size } => cur_file_size,
+                _ => return Err(DbError::WalThreadDead),
+            };
+            self.len = cur_file_size;
+            Ok(cur_file_size)
+        }
+
         // let length = self.check_next_size(self.file_len()?)?;
         // self.file.set_len(length)?;
         //
@@ -243,7 +261,7 @@ impl FileManager{
     /// # Errors
     /// Returns a [`DbError`] (though currently infallible) for API consistency.
     pub fn file_len(&self) -> Result<u64, DbError>{
-        todo!()
+        Ok(self.len)
         // We can just return the length of the memory map, which is identical to the file's length.
         // This avoids making a statx syscall to the OS.
         // Ok(self.mmap.len() as u64)
@@ -254,13 +272,29 @@ impl FileManager{
     /// # Errors
     /// Returns a [`DbError`] if the flush operation fails.
     pub fn flush(&self) -> Result<(), DbError> {
-        todo!()
-        // Ok(self.mmap.flush()?)
+        let _type = FMTypeRequest::Flush;
+        let (sender, recv) = channel();
+        let request = FMRequest::new(_type, u64::MAX, sender);
+
+        self.sender.send(request)?;
+
+
+        let response = recv.recv()?;
+
+        if let Err(e) = response.status{
+            Err(e)
+        } else{
+            match response._type {
+                FMTypeResponse::Flush => {},
+                _ => return Err(DbError::WalThreadDead)
+            }
+            Ok(())
+        }
     }
 }
 
 fn file_manager_worker_thread(file_path: PathBuf, rec: Receiver<FMRequest>){
-    let file = OpenOptions::new()
+    let mut file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
@@ -295,6 +329,24 @@ fn file_manager_worker_thread(file_path: PathBuf, rec: Receiver<FMRequest>){
                     mmap[offset as usize .. offset as usize + pointer.length as usize].copy_from_slice(reference);
                     req.sender.send(FMResponse::new(FMTypeResponse::Write, Ok(()))).unwrap();
                 },
+                FMTypeRequest::IncreaseFileSize(length) => {
+                    drop(mmap);
+                    file.set_len(length);
+
+                    mmap = unsafe {
+                        MmapOptions::new()
+                            .map_mut(&file)
+                    }.unwrap();
+
+                    let _type = FMTypeResponse::IncreaseFileSize { cur_file_size: length };
+                    let response = FMResponse::new(_type, Ok(()));
+                    req.sender.send(response).unwrap();
+                },
+                FMTypeRequest::Flush => {
+                    file.flush().unwrap();
+                    let response = FMResponse::new(FMTypeResponse::Flush, Ok(()));
+                    req.sender.send(response).unwrap();
+                }
             }
         }
         

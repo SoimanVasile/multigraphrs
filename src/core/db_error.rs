@@ -1,4 +1,6 @@
-use std::fmt;
+use std::{fmt, sync::mpsc::{RecvError, SendError}};
+
+use crate::storage::disk_storage::file_manager::FMRequest;
 
 /// Represents fatal engine, I/O, and storage errors.
 ///
@@ -53,6 +55,18 @@ impl std::error::Error for DbError {
 impl From<std::io::Error> for DbError {
     fn from(err: std::io::Error) -> Self {
         DbError::Io(err)
+    }
+}
+
+impl From<RecvError> for DbError {
+    fn from(_: RecvError) -> Self {
+        DbError::WalThreadDead
+    }
+}
+
+impl From<SendError<FMRequest>> for DbError {
+    fn from(_: SendError<FMRequest>) -> Self {
+        DbError::WalThreadDead
     }
 }
 
