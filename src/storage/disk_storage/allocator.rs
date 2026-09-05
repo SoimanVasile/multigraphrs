@@ -159,18 +159,13 @@ impl<'a> AllocatedStruct<'a>
     /// * `prev_offset` - The offset of the previous block to update its next pointer, or `u64::MAX` if current is head.
     /// * `cur_offset` - The offset of the current block being removed.
     fn skip_cur(&mut self, prev_offset: &u64, cur_offset: &u64) -> Result<(), DbError>{
-        let mut buf = Vec::with_capacity(size_of::<DiskEdge>());
-        buf = self.file_manager.reading_bytes(*cur_offset, *cur_offset + size_of::<DiskEdge>() as u64, buf)?;
-
-        let cur_disk_edge: DiskEdge = *bytemuck::from_bytes(&buf);
+        let cur_disk_edge: DiskEdge = self.file_manager.reading_bytes(*cur_offset, *cur_offset + size_of::<DiskEdge>() as u64, |b: &[u8]| *bytemuck::from_bytes(b))?;
         if *prev_offset == u64::MAX{
             self.set_header(&(NUMBER_OF_LINKED_LIST-1), &cur_disk_edge.weight_offset);
             return Ok(());
         }
 
-        buf = self.file_manager.reading_bytes(*prev_offset, *prev_offset + size_of::<DiskEdge>() as u64, buf)?;
-
-        let prev_disk_edge: DiskEdge = *bytemuck::from_bytes(&buf);
+        let prev_disk_edge: DiskEdge = self.file_manager.reading_bytes(*prev_offset, *prev_offset + size_of::<DiskEdge>() as u64, |b: &[u8]| *bytemuck::from_bytes(b))?;
 
         let cap = prev_disk_edge.weight_len;
         let new_prev_disk_edge = DiskEdge::new(cur_disk_edge.weight_offset, cap, u64::MAX);
@@ -214,15 +209,14 @@ impl<'a> AllocatedStruct<'a>
             }
             break;
         }
-        let mut buf = Vec::with_capacity(size_of::<DiskEdge>());
         if index < NUMBER_OF_LINKED_LIST - 1{
             let offset_free_memory = self.get_header(&index);
 
-            buf = self.file_manager.reading_bytes(offset_free_memory, offset_free_memory + size_of::<DiskEdge>() as u64, buf)?;
-
-            println!("{:?}",  buf);
-            println!("BUF LENGTH = {}", buf.len());
-            let disk_edge: DiskEdge = *bytemuck::from_bytes(&buf);
+            let disk_edge: DiskEdge = self.file_manager.reading_bytes(offset_free_memory, offset_free_memory + size_of::<DiskEdge>() as u64, |b: &[u8]| {
+                println!("{:?}", b);
+                println!("BUF LENGTH = {}", b.len());
+                *bytemuck::from_bytes(b)
+            })?;
 
             if let Some(ref mut t) = self.tx {
                 t.zero_mmap(self.file_id, offset_free_memory, offset_free_memory + *size);
@@ -261,9 +255,7 @@ impl<'a> AllocatedStruct<'a>
             let mut cur_offset = self.get_header(&index);
 
             while cur_offset != u64::MAX{
-                buf = self.file_manager.reading_bytes(cur_offset, cur_offset + size_of::<DiskEdge>() as u64, buf)?;
-
-                let cur_disk_edge: DiskEdge = *bytemuck::from_bytes(&buf);
+                let cur_disk_edge: DiskEdge = self.file_manager.reading_bytes(cur_offset, cur_offset + size_of::<DiskEdge>() as u64, |b: &[u8]| *bytemuck::from_bytes(b))?;
 
                 if cur_disk_edge.weight_len >= *size{
                     self.skip_cur(&prev_offset, &cur_offset)?;
@@ -357,9 +349,7 @@ mod tests {
 
     /// Helper: read a DiskEdge from the mmap at the given offset.
     fn read_block(fm: &FileManager, offset: u64) -> Result<DiskEdge, DbError> {
-        let buf = Vec::with_capacity(size_of::<DiskEdge>());
-        let bytes = fm.reading_bytes(offset, offset + size_of::<DiskEdge>() as u64, buf)?;
-        Ok(*bytemuck::from_bytes::<DiskEdge>(&bytes))
+        fm.reading_bytes(offset, offset + size_of::<DiskEdge>() as u64, |b: &[u8]| *bytemuck::from_bytes::<DiskEdge>(b))
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -487,8 +477,7 @@ mod tests {
         assert_eq!(offset, 0);
 
         // The returned region should be zeroed
-        let buf = Vec::with_capacity(128);
-        let data = fm.reading_bytes(0, 128, buf).unwrap();
+        let data = fm.reading_bytes(0, 128, |b: &[u8]| b.to_vec()).unwrap();
         assert!(data.iter().all(|&b| b == 0), "allocated region should be zeroed");
     }
 

@@ -1,7 +1,9 @@
 use std::io::Write;
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 use std::{fs::OpenOptions, path::PathBuf};
+use arc_swap::ArcSwap;
 use memmap2::MmapMut;
 use memmap2::MmapOptions;
 use crate::core::db_error::DbError;
@@ -73,6 +75,7 @@ impl<'a> FMRequest{
 pub struct FileManager{
     sender: Sender<FMRequest>,
     len: u64,
+    mmap: Arc<ArcSwap<MmapMut>>,
 }
 
 impl FileManager{
@@ -91,6 +94,19 @@ impl FileManager{
             .truncate(false)
             .open(&file_path)?;
 
+        if file.metadata().map(|m| m.len()).unwrap_or(0) == 0 {
+                file.set_len(FILE_INITIAL_SIZE)?;
+                created = true;
+        }
+
+        let mmap = unsafe {
+            MmapOptions::new()
+                .map_mut(&file).unwrap()
+        };
+        let shared_mmap = Arc::new(ArcSwap::new(Arc::new(mmap)));
+
+        let thread_mmap = shared_mmap.clone();
+
         if file.metadata().map(|m| m.len()).unwrap_or(0) == 0{
             file.set_len(FILE_INITIAL_SIZE)?;
             created = true
@@ -99,10 +115,10 @@ impl FileManager{
         let (sender, request) = channel();
 
         thread::spawn(move || {
-            file_manager_worker_thread(file_path, request);
+            file_manager_worker_thread(file_path, &thread_mmap, request);
         });
 
-        Ok((Self{sender, len: file.metadata().unwrap().len()}, created))
+            Ok((Self{sender, len: file.metadata().unwrap().len(), mmap: shared_mmap}, created))
     }
 
     
@@ -162,29 +178,16 @@ impl FileManager{
     ///
     /// # Panics
     /// Panics if the range `[start, end)` is out of bounds for the memory map.
-    pub fn reading_bytes(&self, start: u64, end: u64, mut buffer: Vec<u8>) -> Result<Vec<u8>, DbError>{
-        buffer.clear();
-        let (send, receiv) = channel();
+    pub fn reading_bytes<F, R>(&self, start: u64, end: u64, parser: F) -> Result<R, DbError>
+    where 
+        F: FnOnce(&[u8]) -> R,
+    {
+        let guard = self.mmap.load();
+        let bytes: &[u8] = &guard;
 
-        let _type = FMTypeRequest::Read(end - start, buffer);
-        let req = FMRequest::new(_type, start, send);
-
-        self.sender.send(req).map_err(|_|{
-            DbError::WalThreadDead
-        })?;
-
-        let res = receiv.recv().map_err(|_|{
-            DbError::WalThreadDead
-        })?;
-
-        if let Err(e) = res.status{
-            Err(e)
-        } else{
-            Ok(match res._type{
-                FMTypeResponse::Read(bytes) => {bytes}
-                _ => {return Err(DbError::WalThreadDead)}
-            })
-        }
+        let read_bytes = bytes.get(start as usize..end as usize)
+            .ok_or(DbError::OutOfBoundIndexing {offset: start, len: end.saturating_sub(start)})?;
+        Ok(parser(read_bytes))
     }
 
     /// Reads a mutable slice of bytes from the memory map that can modify the memory-mapped file.
@@ -293,22 +296,16 @@ impl FileManager{
     }
 }
 
-fn file_manager_worker_thread(file_path: PathBuf, rec: Receiver<FMRequest>){
-    let mut file = OpenOptions::new()
+fn file_manager_worker_thread(file_path: PathBuf, arc_mmap: &ArcSwap<MmapMut>, rec: Receiver<FMRequest>){
+    let file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
         .open(file_path).unwrap();
 
-    let mut mmap = unsafe {
-        MmapOptions::new()
-            .map_mut(&file)
-    }.unwrap();
-
-
+    let mut requests: Vec<FMRequest> = Vec::with_capacity(1<<15);
     loop{
-        let mut requests: Vec<FMRequest> = Vec::with_capacity(1<<15);
 
         requests.push(rec.recv().unwrap());
 
@@ -316,39 +313,45 @@ fn file_manager_worker_thread(file_path: PathBuf, rec: Receiver<FMRequest>){
             requests.push(req);
         }
 
-        for req in requests.into_iter(){
+        for req in requests.iter_mut(){
             match req._type{
-                FMTypeRequest::Read(length, mut buffer) => {
-                    let offset = req.offset;
-                    buffer.extend_from_slice(&mmap[offset as usize .. (offset + length) as usize]);
-                    req.sender.send(FMResponse::new(FMTypeResponse::Read(buffer), Ok(()))).unwrap();
-                },
                 FMTypeRequest::Write(pointer) => {
+                    let guard = arc_mmap.load();
                     let offset = req.offset;
                     let reference = unsafe { &pointer.raw_pointer.as_ref().unwrap()};
-                    mmap[offset as usize .. offset as usize + pointer.length as usize].copy_from_slice(reference);
+
+                    unsafe {
+                        let mut_ptr = guard.as_ptr() as *mut u8;
+                        let mmap = std::slice::from_raw_parts_mut(mut_ptr, guard.len());
+                        mmap[offset as usize .. offset as usize + pointer.length as usize].copy_from_slice(reference);
+                    }
                     req.sender.send(FMResponse::new(FMTypeResponse::Write, Ok(()))).unwrap();
                 },
                 FMTypeRequest::IncreaseFileSize(length) => {
-                    drop(mmap);
                     file.set_len(length);
 
-                    mmap = unsafe {
+                    let new_mmap = Arc::new(unsafe {
                         MmapOptions::new()
-                            .map_mut(&file)
-                    }.unwrap();
+                            .map_mut(&file).unwrap()
+                    });
+                    arc_mmap.swap(new_mmap);
+
 
                     let _type = FMTypeResponse::IncreaseFileSize { cur_file_size: length };
                     let response = FMResponse::new(_type, Ok(()));
                     req.sender.send(response).unwrap();
                 },
                 FMTypeRequest::Flush => {
-                    file.flush().unwrap();
+                    let guard = arc_mmap.load();
+                    guard.flush();
+                    
                     let response = FMResponse::new(FMTypeResponse::Flush, Ok(()));
                     req.sender.send(response).unwrap();
                 }
+
+                _ => {},
             }
         }
-        
+        requests.clear();
     }
 }

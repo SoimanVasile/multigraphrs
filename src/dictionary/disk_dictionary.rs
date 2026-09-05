@@ -89,18 +89,15 @@ where
     fn populating(&mut self) -> Result<(), DbError>{
         let mut offset = 0;
         let mut max_data_eof = 0;
-        let mut buf: Vec<u8> = Vec::with_capacity(size_of::<NodeId>());
         while offset < self.file_node_id.file_len()?{
-            buf = self.file_node_id.reading_bytes(offset, offset + size_of::<NodeId>() as u64, buf)?;
-            let node_id: NodeId = NodeId::from_bytes(&buf);
+            let node_id: NodeId = self.file_node_id.reading_bytes(offset, offset + size_of::<NodeId>() as u64, |b: &[u8]| NodeId::from_bytes(b))?;
                 
             if node_id.data_len == 0{
                 break;
             }
 
             if node_id.data_len != u64::MAX {
-                buf = self.file_data.reading_bytes(node_id.data_offset, node_id.data_offset + node_id.data_len, buf)?;
-                let key = K::from_bytes(&buf);
+                let key = self.file_data.reading_bytes(node_id.data_offset, node_id.data_offset + node_id.data_len, |b: &[u8]| K::from_bytes(b))?;
 
                 self.hashing.insert(key, self.calculate_id_from_offset(offset));
                 
@@ -261,18 +258,16 @@ where
     fn reverse_node_data(&self, id: u64) -> Option<K> {
         let offset = self.calculate_offset_from_id(id);
 
-        let mut buf = Vec::with_capacity(size_of::<NodeId>());
-        buf = self.file_node_id.reading_bytes(offset, offset + std::mem::size_of::<NodeId>() as u64, buf).unwrap();
-        let node_id = NodeId::from_bytes(&buf);
+        let node_id: NodeId = self.file_node_id.reading_bytes(offset, offset + std::mem::size_of::<NodeId>() as u64, |b: &[u8]| NodeId::from_bytes(b)).unwrap();
 
         if node_id.data_len == u64::MAX{
             None
         }else{
             let start = node_id.data_offset;
             let end = start + node_id.data_len;
-            buf = self.file_data.reading_bytes(start, end, buf).unwrap();
+            let key = self.file_data.reading_bytes(start, end, |b: &[u8]| K::from_bytes(b)).unwrap();
 
-            Some(K::from_bytes(&buf))
+            Some(key)
         }
     }
 

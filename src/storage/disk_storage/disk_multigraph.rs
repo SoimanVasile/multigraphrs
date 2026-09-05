@@ -122,8 +122,7 @@ fn resizing_disk_node(file_manager: &mut FileManager, super_block: &mut SuperBlo
     let edge_offset_end = edge_offset + (disk_node.number_of_edges * size_of::<DiskEdge>() as u64);
 
     if let Some(t) = tx.as_deref_mut() {
-        let buf = Vec::with_capacity(disk_node.capacity as usize);
-        let bytes = file_manager.reading_bytes(edge_offset, edge_offset_end, buf)?;
+        let bytes = file_manager.reading_bytes(edge_offset, edge_offset_end, |b: &[u8]| b.to_vec())?;
         t.write_bytes(FileId::Structure, free_offset, &bytes);
     } else {
         file_manager.copy_within(edge_offset, edge_offset_end, free_offset);
@@ -164,8 +163,7 @@ pub fn resizing_disk_node_reverse(file_manager: &mut FileManager, super_block: &
 
     let src_end = old_offset + (disk_node.number_of_reverse_edges * size_of::<u64>() as u64);
     if let Some(t) = tx.as_deref_mut() {
-        let buf = Vec::with_capacity(disk_node.reverse_capacity as usize);
-        let bytes = file_manager.reading_bytes(old_offset, src_end, buf)?;
+        let bytes = file_manager.reading_bytes(old_offset, src_end, |b: &[u8]| b.to_vec())?;
         t.write_bytes(FileId::Reverse, free_offset, &bytes);
     } else {
         file_manager.copy_within(old_offset, src_end, free_offset);
@@ -283,9 +281,7 @@ where
         }
 
 
-        let buf = Vec::with_capacity(size_of::<SuperBlock>());
-        let super_block_bytes = file_node.reading_bytes(0, 1024, buf).expect("Failed to read the SuperBlock");
-        let super_block: SuperBlock = *bytemuck::from_bytes(&super_block_bytes);
+        let super_block: SuperBlock = file_node.reading_bytes(0, 1024, |b: &[u8]| *bytemuck::from_bytes(b)).expect("Failed to read the SuperBlock");
 
         let node_count = super_block.node_count;
         let edge_count = super_block.edge_count;
@@ -361,13 +357,11 @@ where
     /// # Panics
     /// Panics if reading from the memory map fails.
     pub fn get_super_block(&self) -> Result<SuperBlock, DbError>{
-        let buf = Vec::with_capacity(size_of::<SuperBlock>());
-        let superblock_bytes = self.file_manager_node.reading_bytes(0, SUPER_BLOCK_SIZE as u64, buf).map_err(|e|{
+        let super_block: SuperBlock = self.file_manager_node.reading_bytes(0, SUPER_BLOCK_SIZE as u64, |b: &[u8]| *bytemuck::from_bytes(b)).map_err(|e|{
             self.poison();
             e
         })?;
-        let super_block: &SuperBlock = bytemuck::from_bytes(&superblock_bytes);
-        Ok(*super_block)
+        Ok(super_block)
     }
 
     /// Calculates the absolute byte offset of a [`DiskNode`] within the node storage file.
@@ -429,14 +423,12 @@ where
     pub fn get_disk_node(&self, source: &u64) -> Result<DiskNode, DbError>{
         let offset = self.calculate_node_offset(source);
 
-        let buf = Vec::with_capacity(size_of::<DiskNode>());
-        let disk_node_bytes = self.file_manager_node.reading_bytes(offset, offset + std::mem::size_of::<DiskNode>() as u64, buf).map_err(|e|{
+        let disk_node: DiskNode = self.file_manager_node.reading_bytes(offset, offset + std::mem::size_of::<DiskNode>() as u64, |b: &[u8]| *bytemuck::from_bytes(b)).map_err(|e|{
             self.poison();
             e
         })?;
-        let disk_node: &DiskNode = bytemuck::from_bytes(&disk_node_bytes);
 
-        Ok(*disk_node)
+        Ok(disk_node)
     }
 
     /// Computes the byte offset of the `edge_numbers`-th edge within a node's
@@ -660,8 +652,7 @@ where
             let dest_start = edge_offset_removed;
 
             if let Some(ref mut t) = tx {
-                let buf = Vec::with_capacity(size_of::<DiskEdge>());
-                let bytes = self.file_manager_edge_structure.reading_bytes(src_start, src_end, buf).map_err( |e| {
+                let bytes = self.file_manager_edge_structure.reading_bytes(src_start, src_end, |b: &[u8]| b.to_vec()).map_err( |e| {
                     self.poison();
                     e
                 })?;
@@ -763,8 +754,7 @@ where
             let last_end = last_start + std::mem::size_of::<u64>() as u64;
             
             if let Some(ref mut t) = tx {
-                let buf = Vec::with_capacity(size_of::<u64>());
-                let bytes = self.file_manager_reverse_edge.reading_bytes(last_start, last_end, buf).map_err(|e| {
+                let bytes = self.file_manager_reverse_edge.reading_bytes(last_start, last_end, |b: &[u8]| b.to_vec()).map_err(|e| {
                     self.poison();
                     e
                 })?;
@@ -1055,7 +1045,6 @@ where
         })?;
         let mut tx = WalTransaction::new();
 
-        let mut buf = Vec::with_capacity(SUPER_BLOCK_SIZE);
         for chunk in sorted_edges.chunk_by(|a, b| a.0 == b.0) {
             let source = chunk[0].0;
             let mut edges_to_remove: Vec<Edge<W>> = chunk.iter().map(|(_, e)| e.clone()).collect();
@@ -1071,20 +1060,18 @@ where
 
             let start_offset = disk_node.list_edges_offset;
             let total_bytes = disk_node.number_of_edges * std::mem::size_of::<DiskEdge>() as u64;
-            buf = self.file_manager_edge_structure.reading_bytes(start_offset, start_offset + total_bytes, buf).map_err(|e| {
+            let mut disk_edges: Vec<DiskEdge> = self.file_manager_edge_structure.reading_bytes(start_offset, start_offset + total_bytes, |b: &[u8]| bytemuck::cast_slice(b).to_vec()).map_err(|e| {
                 self.poison();
                 GraphError::Db(e)
             })?;
-            let mut disk_edges: Vec<DiskEdge> = bytemuck::cast_slice(&buf).to_vec();
             
             let mut indices_to_remove = Vec::new();
 
             for (i, disk_edge) in disk_edges.iter().enumerate() {
-                buf = self.file_manager_weight_data.reading_bytes(disk_edge.weight_offset, disk_edge.weight_offset + disk_edge.weight_len, buf).map_err(|e| {
+                let weight: W = self.file_manager_weight_data.reading_bytes(disk_edge.weight_offset, disk_edge.weight_offset + disk_edge.weight_len, |b: &[u8]| W::from_bytes(b)).map_err(|e| {
                     self.poison();
                     GraphError::Db(e)
                 })?;
-                let weight = W::from_bytes(&buf);
                 
                 if let Some(pos) = edges_to_remove.iter().position(|e| e.get_target() == disk_edge.node && e.get_weight() == weight) {
                     indices_to_remove.push(i);
@@ -1267,16 +1254,14 @@ where
             GraphError::Db(e)
         })?;
 
-        let mut buf = Vec::with_capacity(size_of::<DiskEdge>());
         for edge_number in 0..disk_node.get_number_of_edges(){
             let edge_offset = self.calculate_edge_offset(&disk_node.get_edge_offset(), &(edge_number));
 
-            buf = self.file_manager_edge_structure
-                .reading_bytes(edge_offset, edge_offset + std::mem::size_of::<DiskEdge>() as u64, buf).map_err(|e| {
+            let disk_edge: DiskEdge = self.file_manager_edge_structure
+                .reading_bytes(edge_offset, edge_offset + std::mem::size_of::<DiskEdge>() as u64, |b: &[u8]| *bytemuck::from_bytes(b)).map_err(|e| {
                     self.poison();
                     GraphError::Db(e)
                 })?;
-            let disk_edge: &DiskEdge = bytemuck::from_bytes(&buf);
 
             if disk_edge.node == *target{
                 let mut tx = WalTransaction::new();
@@ -1437,14 +1422,12 @@ where
         if check_node_allocated(&disk_node, FileId::Reverse).map_err(|e| { self.poison(); GraphError::from(e) })? {
             return Ok(());
         }
-        let mut buf: Vec<u8> = Vec::with_capacity(size_of::<u64>());
         for i in 0..disk_node.number_of_reverse_edges {
             let edge_offset = disk_node.list_reverse_edges_offset + i * std::mem::size_of::<u64>() as u64;
-            buf = self.file_manager_reverse_edge.reading_bytes(edge_offset, edge_offset + std::mem::size_of::<u64>() as u64, buf).map_err(|e| {
+            let current_origin: u64 = self.file_manager_reverse_edge.reading_bytes(edge_offset, edge_offset + std::mem::size_of::<u64>() as u64, |b: &[u8]| u64::from_bytes(b)).map_err(|e| {
                 self.poison();
                 GraphError::Db(e)
             })?;
-            let current_origin: u64 = u64::from_bytes(&buf);
 
             if current_origin == *origin {
                 let mut tx = WalTransaction::new();
@@ -1469,7 +1452,6 @@ where
 
         let mut tx = WalTransaction::new();
 
-        let mut buf = Vec::with_capacity(SUPER_BLOCK_SIZE);
         for chunk in sorted_edges.chunk_by(|a, b| a.0 == b.0) {
             let source = chunk[0].0;
             let mut origins_to_remove: Vec<u64> = chunk.iter().map(|&(_, o)| o).collect();
@@ -1484,11 +1466,10 @@ where
             
             let start_offset = disk_node.list_reverse_edges_offset;
             let total_bytes = disk_node.number_of_reverse_edges * std::mem::size_of::<u64>() as u64;
-            buf = self.file_manager_reverse_edge.reading_bytes(start_offset, start_offset + total_bytes, buf).map_err(|e| {
+            let mut reverse_edges: Vec<u64> = self.file_manager_reverse_edge.reading_bytes(start_offset, start_offset + total_bytes, |b: &[u8]| bytemuck::cast_slice(b).to_vec()).map_err(|e| {
                 self.poison();
                 GraphError::Db(e)
             })?;
-            let mut reverse_edges: Vec<u64> = bytemuck::cast_slice(&buf).to_vec();
             
             let mut indices_to_remove = Vec::new();
 

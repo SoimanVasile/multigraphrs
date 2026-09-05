@@ -29,6 +29,8 @@ pub enum DbError {
     /// Once poisoned, the database will not accept any further write operations.
     /// The only safe action is to close and re-open the database.
     Poisoned,
+
+    OutOfBoundIndexing {offset: u64, len: u64},
 }
 
 impl fmt::Display for DbError {
@@ -39,6 +41,7 @@ impl fmt::Display for DbError {
             DbError::InvalidFileId(id) => write!(f, "Invalid internal file ID: {}", id),
             DbError::Poisoned => write!(f, "Database is poisoned due to a previous fatal I/O error"),
             DbError::WalThreadDead => write!(f, "WAL thread is dead and cant write in log"),
+            DbError::OutOfBoundIndexing { offset, len } => write!(f, "Tried an out of bound indexing at offset: {} and of length: {}", offset, len),
         }
     }
 }
