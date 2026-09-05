@@ -1,4 +1,5 @@
-use std::io::Write;
+use std::fs::File;
+use std::io::Error;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
@@ -7,13 +8,40 @@ use arc_swap::ArcSwap;
 use memmap2::MmapMut;
 use memmap2::MmapOptions;
 use crate::core::db_error::DbError;
-use crate::storage::disk_storage::from_disk_bytes::{AsDiskBytes, FromDiskBytes};
 
 
 const FILE_INITIAL_SIZE: u64 = 1024 * 1024 * 64;
 
 const FOUR_GB: u64 = 1024 * 1024 * 1024 * 4;
 
+
+fn open_file(file_path: &PathBuf) -> Result<File, Error> {
+    OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(file_path)
+}
+
+fn initialize_file(file: &File, created: &mut bool) -> Result<(), Error>{
+    if file.metadata().map(|m| m.len()).unwrap_or(0) == 0 {
+            file.set_len(FILE_INITIAL_SIZE)?;
+            *created = true;
+    }
+
+    Ok(())
+}
+
+fn create_mmap(file: &File) -> Result<MmapMut, Error>{
+    unsafe {
+        MmapOptions::new()
+            .map_mut(file)
+    }
+}
+
+/// This is a fat pointer for the write to be able to send to the worker thread as it doesnt use
+/// lifetime
 #[derive(Debug, Clone, Copy)]
 struct ZeroCopyBytes{
     length: u64,
@@ -23,48 +51,77 @@ struct ZeroCopyBytes{
 unsafe impl Send for ZeroCopyBytes{}
 
 impl ZeroCopyBytes{
+    /// Creates the fat pointer from a reference so the pointer is non-null.
+    ///
+    /// # Safety
+    ///
+    /// With the current architecture the fat pointer is safe as when a thread send some bytes to
+    /// write it needs to wait for the response so it cant drop the pointer
     fn new(reference: &[u8]) -> Self{
         Self {length: reference.len() as u64, raw_pointer: reference as *const [u8]}
     }
 }
 
+
+/// All the requests that a thread can send to the worker thread
 #[derive(Debug, Clone)]
 enum FMTypeRequest{
-    Read(/*length*/ u64, /*buffer*/ Vec<u8>),
-    Write(/*bytes*/ ZeroCopyBytes),
+
+    /// It needs the raw pointer to the bytes to be able to write them into the file and right now
+    /// this operation is safe
+    Write(ZeroCopyBytes),
+
+    /// Request to increease the file size and it gives the length of the file to be next
     IncreaseFileSize(u64),
+
+    /// The request to flush the file when we want to rotate the wal bin and be sure that everything
+    /// got updated
     Flush,
 }
 
+/// The responses of the worker thread to their respetive requests
 enum FMTypeResponse
 {
-    Read(Vec<u8>),
+    /// All the response dont need to give any information only the status that is found inside the
+    /// [`FMResponse`] struct
     Write,
-    IncreaseFileSize { cur_file_size: u64},
+    IncreaseFileSize,
     Flush,
 }
 
+/// This struct will be send by worker thread after a request
 pub struct FMResponse
 {
+    /// The statis is just for the information in case that an IO failed or other strange things and
+    /// it doesnt need to return anything as this could be take care of by the type
     status: Result<(), DbError>,
+
+    /// The response type given by the requester
     _type: FMTypeResponse
 }
 
 impl<'a> FMResponse
 {
+    /// A helper function to create a FMResponse easier
     fn new(_type: FMTypeResponse, status: Result<(), DbError>) -> Self{
         Self {_type, status}
     }
 }
 
+
+/// This struct will get the worker thread as a request getting the offset, type and the send
+/// channel to be able to responde back
 pub struct FMRequest
-    {
+{
     _type: FMTypeRequest,
     offset: u64,
+
+    /// This is the Sender which the worker thread will respond to give the status of the operation
     sender: Sender<FMResponse>
 }
 
 impl<'a> FMRequest{
+    /// A helper function that just builds the FMRequest
     fn new(_type: FMTypeRequest, offset: u64, sender: Sender<FMResponse>) -> Self{
         Self { _type, offset, sender }
     }
@@ -75,6 +132,8 @@ impl<'a> FMRequest{
 pub struct FileManager{
     sender: Sender<FMRequest>,
     len: u64,
+    /// Is inside an Arc to give the mmap to the worker thread, but have a reference too to have
+    /// instantenous reads
     mmap: Arc<ArcSwap<MmapMut>>,
 }
 
@@ -86,36 +145,19 @@ impl FileManager{
     /// # Errors
     /// Returns a [`DbError`] (wrapping `std::io::Error`) if file operations (open, metadata, set_len, map_mut) fail.
     pub fn new(file_path: PathBuf) -> Result<(Self, bool), DbError>{
+
         let mut created = false;
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&file_path)?;
+        let file = open_file(&file_path)?;
+        initialize_file(&file, &mut created)?;
 
-        if file.metadata().map(|m| m.len()).unwrap_or(0) == 0 {
-                file.set_len(FILE_INITIAL_SIZE)?;
-                created = true;
-        }
-
-        let mmap = unsafe {
-            MmapOptions::new()
-                .map_mut(&file).unwrap()
-        };
+        let mmap = create_mmap(&file)?;
         let shared_mmap = Arc::new(ArcSwap::new(Arc::new(mmap)));
-
         let thread_mmap = shared_mmap.clone();
-
-        if file.metadata().map(|m| m.len()).unwrap_or(0) == 0{
-            file.set_len(FILE_INITIAL_SIZE)?;
-            created = true
-        }
 
         let (sender, request) = channel();
 
         thread::spawn(move || {
-            file_manager_worker_thread(file_path, &thread_mmap, request);
+            file_manager_worker_thread(file_path, thread_mmap, request);
         });
 
             Ok((Self{sender, len: file.metadata().unwrap().len(), mmap: shared_mmap}, created))
@@ -151,24 +193,16 @@ impl FileManager{
     /// of the bytes is different from the range
     pub fn writing_bytes_to_mmap(&mut self, start: u64, _end: u64,  bytes: &[u8]) -> Result<(), DbError>{
         let (send, receiv) = channel();
-        let pointer = ZeroCopyBytes::new(bytes);
-        let _type = FMTypeRequest::Write(pointer);
-        let request = FMRequest::new(_type, start, send);
+        let request = FMRequest::new(
+            FMTypeRequest::Write(ZeroCopyBytes::new(bytes)),
+            start,
+            send
+        );
 
-        self.sender.send(request).map_err(|_| {
-            DbError::WalThreadDead
-        })?;
+        self.sender.send(request)?;
+        let res = receiv.recv()?;
 
-        let res = receiv.recv().map_err(|_|{
-            DbError::WalThreadDead
-        })?;
-
-        if let Err(e) = res.status {
-            Err(e)
-        } else{
-            Ok(())
-        }
-
+        res.status
     }
 
     /// Reads a slice of bytes from the memory map.
@@ -210,7 +244,7 @@ impl FileManager{
     ///
     /// # Panics
     /// Panics if either the source range or the destination range is out of bounds.
-    pub fn copy_within(&mut self, src_start: u64, src_end: u64, dest_start: u64){
+    pub fn copy_within(&mut self, _src_start: u64, _src_end: u64, _dest_start: u64){
         todo!()
         // self.mmap.copy_within(src_start as usize .. src_end as usize, dest_start as usize);
     }
@@ -220,35 +254,27 @@ impl FileManager{
     /// # Errors
     /// Returns a [`DbError`] if file metadata cannot be read, resizing fails, or mapping fails.
     pub fn increase_file_size(&mut self) -> Result<u64, DbError>{
-        let _type = FMTypeRequest::IncreaseFileSize(self.check_next_size(self.file_len()?)?);
+
         let (sender, recv) = channel();
-        let request = FMRequest::new(_type, u64::MAX, sender);
+        let next_length = self.check_next_size(self.file_len()?)?;
 
-        self.sender.send(request).map_err(|_| {
-            DbError::WalThreadDead
-        })?;
+        let request = FMRequest::new(
+            FMTypeRequest::IncreaseFileSize(next_length),
+            u64::MAX,
+            sender);
 
+        self.sender.send(request)?;
         let response = recv.recv()?;
         
-        if let Err(e) = response.status{
-            Err(e)
-        }else{
-            let cur_file_size = match response._type{
-                FMTypeResponse::IncreaseFileSize { cur_file_size } => cur_file_size,
-                _ => return Err(DbError::WalThreadDead),
-            };
-            self.len = cur_file_size;
-            Ok(cur_file_size)
-        }
+        response.status?;
 
-        // let length = self.check_next_size(self.file_len()?)?;
-        // self.file.set_len(length)?;
-        //
-        // self.mmap = unsafe{
-        //     MmapOptions::new()
-        //         .map_mut(&self.file)?
-        // };
-        // Ok(())
+        match response._type{
+            FMTypeResponse::IncreaseFileSize  => {
+                self.len = next_length;
+                Ok(next_length)
+            },
+            _ => Err(DbError::WalThreadDead),
+        }
     }
 
     pub fn check_next_size(&self, length: u64) -> Result<u64, DbError>{
@@ -275,83 +301,99 @@ impl FileManager{
     /// # Errors
     /// Returns a [`DbError`] if the flush operation fails.
     pub fn flush(&self) -> Result<(), DbError> {
-        let _type = FMTypeRequest::Flush;
+
         let (sender, recv) = channel();
-        let request = FMRequest::new(_type, u64::MAX, sender);
+
+        let request = FMRequest::new(
+            FMTypeRequest::Flush,
+            u64::MAX,
+            sender);
 
         self.sender.send(request)?;
+        let res = recv.recv()?;
 
+        res.status
+    }
+}
 
-        let response = recv.recv()?;
+fn file_manager_worker_thread(file_path: PathBuf, arc_mmap: Arc<ArcSwap<MmapMut>>, rec: Receiver<FMRequest>){
 
-        if let Err(e) = response.status{
-            Err(e)
-        } else{
-            match response._type {
-                FMTypeResponse::Flush => {},
-                _ => return Err(DbError::WalThreadDead)
+    let Ok(file) = open_file(&file_path) else {return;};
+
+    let mut requests: Vec<FMRequest> = Vec::with_capacity(1<<15);
+    loop{
+        
+        get_batch(&mut requests, &rec);
+        for req in requests.iter_mut(){
+            match req._type{
+                FMTypeRequest::Write(pointer) => if write_req(&arc_mmap, &req, &pointer).is_err(){ return; },
+                FMTypeRequest::IncreaseFileSize(length) => if increase_file_size_req(&arc_mmap, &req, &file, length).is_err() { return; },
+                FMTypeRequest::Flush => if flush_req(&arc_mmap, &req).is_err() { return; }
             }
-            Ok(())
         }
     }
 }
 
-fn file_manager_worker_thread(file_path: PathBuf, arc_mmap: &ArcSwap<MmapMut>, rec: Receiver<FMRequest>){
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(file_path).unwrap();
+fn get_batch(requests: &mut Vec<FMRequest>, rec: &Receiver<FMRequest>){
+    requests.clear();
+    requests.push(rec.recv().unwrap());
 
-    let mut requests: Vec<FMRequest> = Vec::with_capacity(1<<15);
-    loop{
+    while let Ok(req) = rec.try_recv(){
+        requests.push(req);
+    }
 
-        requests.push(rec.recv().unwrap());
+}
 
-        while let Ok(req) = rec.try_recv(){
-            requests.push(req);
-        }
+fn write_req(arc_mmap: &ArcSwap<MmapMut>, req: &FMRequest, pointer: &ZeroCopyBytes) -> Result<(), DbError>{
+    let guard = arc_mmap.load();
+    let offset = req.offset;
+    let reference = unsafe { &*pointer.raw_pointer};
 
-        for req in requests.iter_mut(){
-            match req._type{
-                FMTypeRequest::Write(pointer) => {
-                    let guard = arc_mmap.load();
-                    let offset = req.offset;
-                    let reference = unsafe { &pointer.raw_pointer.as_ref().unwrap()};
+    unsafe {
+        let mut_ptr = guard.as_ptr() as *mut u8;
+        let mmap = std::slice::from_raw_parts_mut(mut_ptr, guard.len());
+        mmap[offset as usize .. offset as usize + pointer.length as usize].copy_from_slice(reference);
+    }
+    Ok(req.sender.send(FMResponse::new(FMTypeResponse::Write, Ok(())))?)
+}
 
-                    unsafe {
-                        let mut_ptr = guard.as_ptr() as *mut u8;
-                        let mmap = std::slice::from_raw_parts_mut(mut_ptr, guard.len());
-                        mmap[offset as usize .. offset as usize + pointer.length as usize].copy_from_slice(reference);
-                    }
-                    req.sender.send(FMResponse::new(FMTypeResponse::Write, Ok(()))).unwrap();
-                },
-                FMTypeRequest::IncreaseFileSize(length) => {
-                    file.set_len(length);
+fn increase_file_size_req(arc_mmap: &ArcSwap<MmapMut>, req: &FMRequest, file: &File, length: u64) -> Result<(), DbError>{
 
-                    let new_mmap = Arc::new(unsafe {
-                        MmapOptions::new()
-                            .map_mut(&file).unwrap()
-                    });
-                    arc_mmap.swap(new_mmap);
+    file.set_len(length)?;
+
+    let status_mmap = unsafe {
+        MmapOptions::new()
+            .map_mut(file)
+    };
+
+    let mut status = Ok(());
+    if let Err(e) = status_mmap{
+        status = Err(DbError::Io(e))
+    } else{
+        let new_mmap = Arc::new(status_mmap.unwrap());
+        arc_mmap.swap(new_mmap);
+    }
 
 
-                    let _type = FMTypeResponse::IncreaseFileSize { cur_file_size: length };
-                    let response = FMResponse::new(_type, Ok(()));
-                    req.sender.send(response).unwrap();
-                },
-                FMTypeRequest::Flush => {
-                    let guard = arc_mmap.load();
-                    guard.flush();
-                    
-                    let response = FMResponse::new(FMTypeResponse::Flush, Ok(()));
-                    req.sender.send(response).unwrap();
-                }
+    let _type = FMTypeResponse::IncreaseFileSize;
+    let response = FMResponse::new(_type, status);
+    Ok(req.sender.send(response)?)
+}
 
-                _ => {},
-            }
-        }
-        requests.clear();
+fn flush_req(arc_mmap: &ArcSwap<MmapMut>, req: &FMRequest) -> Result<(), DbError>{
+
+    let guard = arc_mmap.load();
+    match guard.flush() {
+        Ok(()) => {
+            let response = FMResponse::new(FMTypeResponse::Flush, Ok(()));
+            req.sender.send(response)?;
+            Ok(())
+        },
+        Err(e) =>{
+            let err_kind = e.kind();
+            let response = FMResponse::new(FMTypeResponse::Flush, Err(DbError::Io(e)));
+            req.sender.send(response)?;
+            Err(DbError::Io(err_kind.into()))
+        },
     }
 }
