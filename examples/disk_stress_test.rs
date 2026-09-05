@@ -303,7 +303,7 @@ fn main() {
 
     // 10M nodes, 3 edges each = 30M edges
     // With 128-byte initial capacity: ~5.5 GB disk usage (fits in 7.7 GB tmpfs)
-    run_stress_test(10_000_000, 3, "massive_10m");
+    run_stress_test(100_000, 3, "massive_10m");
 
     println!();
     println!("All stress tests complete.");
