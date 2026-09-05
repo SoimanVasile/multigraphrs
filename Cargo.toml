@@ -14,6 +14,7 @@ readme = "README.md"
 bytemuck = { version = "1.25.0", features = ["derive"] }
 memmap2 = "0.9.10"
 ahash = "0.8.11"
+arc-swap = "1.9.2"
 
 [profile.profiling]
 inherits = "release"
