@@ -29,15 +29,13 @@ const NUMBER_OF_LINKED_LIST: u64 = 7;
 /// NOTE: Passing sizes `< 128` or non-power-of-2 sizes will result in logic errors
 /// or panics elsewhere in the allocator, as it relies on this exact mapping.
 pub fn find_index(size: &u64) -> u64{
+
+    if *size < 64 {return 0;}
     
     let aux = *size >> 7;
     let index = u64::BITS as u64 - 1 - aux.leading_zeros() as u64;
 
-    if index >= NUMBER_OF_LINKED_LIST{
-        return 6u64;
-    }
-
-    index
+    index.min(NUMBER_OF_LINKED_LIST-1)
 }
 
 /// The main allocator struct responsible for managing disk space.
@@ -124,32 +122,27 @@ impl<'a> AllocatedStruct<'a>
     /// # Arguments
     /// * `new_offset` - The starting offset of the remainder block to be split.
     /// * `new_cap` - The total capacity of the remainder to distribute into free lists.
-    fn split_capacity_into_power_of_2s(&mut self, new_offset: &u64, new_cap: &u64){
-        let mut power_of_2: [u64; 40] = [0; 40];
-        let mut cap_div = new_cap >> 7;
-        while cap_div != 0{
-            let cap_div_index = u64::BITS - 1 - cap_div.leading_zeros();
-            power_of_2[cap_div_index as usize] = 1u64;
-            cap_div ^= 1<<cap_div_index;
-        }
-        
+    fn split_capacity_into_power_of_2s(&mut self, new_offset: u64, new_cap: u64){
+        let mut cap_div: u64 = new_cap >> 7;
         let mut padding = 0;
-        for (index, val) in power_of_2.iter().enumerate(){
-            if *val == 1{
-                let header_index: u64 = index.min((NUMBER_OF_LINKED_LIST - 1) as usize) as u64;
+        while cap_div != 0 {
+            let index = cap_div.trailing_zeros() as u64;
+            let header_index = index.min((NUMBER_OF_LINKED_LIST - 1) as u64);
 
-                let next_offset = self.get_header(&header_index);
-                let start_offset = new_offset + padding;
-                
-                let chunk_size = 1u64 << (index + 7);
-                let end_offset = new_offset + padding + chunk_size;
-                let new_disk_edge: DiskEdge = DiskEdge::new(next_offset, chunk_size, u64::MAX);
+            let next_offset = self.get_header(&header_index);
 
-                self.write_disk_edges(&start_offset, &end_offset, &new_disk_edge);
-                self.set_header(&header_index, &start_offset);
+            let start_offset = new_offset + padding;
 
-                padding += chunk_size;
-            }
+            let chunk_size = 1u64 << (index + 7);
+            let end_offset = start_offset + chunk_size;
+
+            let new_disk_edge: DiskEdge = DiskEdge::new(next_offset, chunk_size, u64::MAX);
+
+            self.write_disk_edges(&start_offset, &end_offset, &new_disk_edge);
+            self.set_header(&header_index, &start_offset);
+
+            cap_div &= cap_div-1;
+            padding += chunk_size;
         }
     }
 
@@ -159,13 +152,13 @@ impl<'a> AllocatedStruct<'a>
     /// * `prev_offset` - The offset of the previous block to update its next pointer, or `u64::MAX` if current is head.
     /// * `cur_offset` - The offset of the current block being removed.
     fn skip_cur(&mut self, prev_offset: &u64, cur_offset: &u64) -> Result<(), DbError>{
-        let cur_disk_edge: DiskEdge = self.file_manager.reading_bytes(*cur_offset, *cur_offset + size_of::<DiskEdge>() as u64, |b: &[u8]| *bytemuck::from_bytes(b))?;
+        let cur_disk_edge: DiskEdge = self.read_disk_edge(*cur_offset)?;
         if *prev_offset == u64::MAX{
             self.set_header(&(NUMBER_OF_LINKED_LIST-1), &cur_disk_edge.weight_offset);
             return Ok(());
         }
 
-        let prev_disk_edge: DiskEdge = self.file_manager.reading_bytes(*prev_offset, *prev_offset + size_of::<DiskEdge>() as u64, |b: &[u8]| *bytemuck::from_bytes(b))?;
+        let prev_disk_edge: DiskEdge = self.read_disk_edge(*prev_offset)?;
 
         let cap = prev_disk_edge.weight_len;
         let new_prev_disk_edge = DiskEdge::new(cur_disk_edge.weight_offset, cap, u64::MAX);
@@ -191,6 +184,107 @@ impl<'a> AllocatedStruct<'a>
         }
     }
 
+
+    fn find_smallest_chunk(&self, size: u64) -> u64{
+
+        let mut index: u64 = find_index(&size);
+
+        while index < NUMBER_OF_LINKED_LIST {
+            if self.get_header(&index) == u64::MAX{
+                index+=1;
+                continue;
+            }
+            break;
+        }
+        index
+    }
+
+    fn zeroing_chunk(&mut self, start_offset: u64, end_offset: u64) -> Result<(), DbError> {
+
+        if let Some(ref mut t) = self.tx {
+            t.zero_mmap(self.file_id, start_offset, end_offset);
+        } else {
+            self.file_manager.zeroing_mmap(start_offset, end_offset)?;
+        }
+        Ok(())
+    }
+
+    fn read_disk_edge(&self, offset: u64) -> Result<DiskEdge, DbError> {
+        self.file_manager.reading_bytes(offset, offset + size_of::<DiskEdge>() as u64, |b: &[u8]| {
+                    *bytemuck::from_bytes(b)
+                })
+    }
+
+    fn print_error(&self, disk_edge: &DiskEdge, size: u64, offset: u64, index: u64) {
+        println!("PANIC AVERTED! weight_len: {}, size: {}, disk_edge weight_offset: {}, disk_edge node: {}", disk_edge.weight_len, size, disk_edge.weight_offset, disk_edge.node);
+        println!("offset_free_memory: {}", offset);
+        println!("index: {}", index);
+
+    }
+
+    fn insert_free_space(&mut self, new_cap: u64, new_offset: u64, cur_disk_edge: &DiskEdge) {
+
+        if new_cap & (new_cap-1) == 0{
+            let new_disk_edge: DiskEdge = DiskEdge::new(cur_disk_edge.weight_offset, new_cap, cur_disk_edge.node);
+
+            self.write_disk_edges(&new_offset, &(new_offset + new_cap), &new_disk_edge);
+            let new_index = find_index(&new_cap);
+
+            self.set_header(&new_index, &new_offset);
+        }else{
+            self.split_capacity_into_power_of_2s(new_offset, new_cap);
+        }
+    }
+
+    fn find_free_space_big_enough(&mut self, size: u64) -> Result<u64, DbError>{
+        let index = NUMBER_OF_LINKED_LIST - 1;
+        let mut offset = self.get_header(&index);
+
+        let mut prev_offset = u64::MAX;
+
+        while offset != u64::MAX {
+            let disk_edge = self.read_disk_edge(offset)?;
+
+            if disk_edge.weight_len >= size{
+                self.skip_cur(&prev_offset, &offset)?;
+                break;
+            }
+
+            prev_offset = offset;
+            offset = disk_edge.weight_offset;
+        }
+    
+        Ok(offset)
+    }
+
+    fn carve_chunk(&mut self, offset: u64, size: u64) -> Result<(), DbError>{
+        let disk_edge = self.read_disk_edge(offset)?;
+
+        let cap = disk_edge.weight_len;
+
+        if cap < size{
+            self.print_error(&disk_edge, size, offset, find_index(&cap));
+            return Err(DbError::AllocatorError);
+        }
+
+        self.zeroing_chunk(offset, offset + size)?;
+        if cap > size{
+            let new_cap = cap - size;
+            let new_offset = offset + size;
+            self.insert_free_space(new_cap, new_offset, &disk_edge);
+        }
+        Ok(())
+    }
+
+    fn remove_head(&mut self, index: u64) -> Result<u64, DbError>{
+        let offset = self.get_header(&index);
+
+        let disk_edge = self.read_disk_edge(offset)?;
+
+        self.set_header(&index, &disk_edge.weight_offset);
+
+        Ok(offset)
+    }
     /// Allocates a block of memory of at least `size` bytes.
     ///
     /// # Arguments
@@ -200,79 +294,19 @@ impl<'a> AllocatedStruct<'a>
     /// Expects `size` to be exactly a power of 2 >= 128. If `size` is an exact power of 2, 
     /// the block popped from buckets 0-5 is guaranteed to exactly match the requested size.
     pub fn allocate_structure(&mut self, size: &u64) -> Result<u64, DbError>{
-        let mut index: u64 = find_index(size);
 
-        while index < NUMBER_OF_LINKED_LIST {
-            if self.get_header(&index) == u64::MAX{
-                index+=1;
-                continue;
-            }
-            break;
-        }
+        let index = self.find_smallest_chunk(*size);
         if index < NUMBER_OF_LINKED_LIST - 1{
-            let offset_free_memory = self.get_header(&index);
+            let offset = self.remove_head(index)?;
+            self.carve_chunk(offset, *size)?;
 
-            let disk_edge: DiskEdge = self.file_manager.reading_bytes(offset_free_memory, offset_free_memory + size_of::<DiskEdge>() as u64, |b: &[u8]| {
-                println!("{:?}", b);
-                println!("BUF LENGTH = {}", b.len());
-                *bytemuck::from_bytes(b)
-            })?;
-
-            if let Some(ref mut t) = self.tx {
-                t.zero_mmap(self.file_id, offset_free_memory, offset_free_memory + *size);
-            } else {
-                self.file_manager.zeroing_mmap(offset_free_memory, offset_free_memory + *size)?;
-            }
-            let next_offset = disk_edge.weight_offset;
-            self.set_header(&index, &next_offset);
-
-            if disk_edge.weight_len == *size{
-                // Exact match, no split needed
-            }else{
-                let new_offset = offset_free_memory + *size;
-
-                if disk_edge.weight_len < *size {
-                    println!("PANIC AVERTED! weight_len: {}, size: {}, disk_edge weight_offset: {}, disk_edge node: {}", disk_edge.weight_len, *size, disk_edge.weight_offset, disk_edge.node);
-                    println!("offset_free_memory: {}", offset_free_memory);
-                    println!("index: {}", index);
-                }
-                let new_cap = disk_edge.weight_len - *size;
-
-                if new_cap & (new_cap-1) == 0{
-                    let new_disk_edge: DiskEdge = DiskEdge::new(disk_edge.weight_offset, new_cap, disk_edge.node);
-
-                    self.write_disk_edges(&new_offset, &(new_offset + new_cap), &new_disk_edge);
-                    let new_index = find_index(&new_cap);
-
-                    self.set_header(&new_index, &new_offset);
-                }else{
-                    self.split_capacity_into_power_of_2s(&new_offset, &new_cap);
-                }
-            } 
-            return Ok(offset_free_memory);
+            return Ok(offset);
         }else if index == NUMBER_OF_LINKED_LIST - 1{
-            let mut prev_offset = u64::MAX;
-            let mut cur_offset = self.get_header(&index);
+            let offset = self.find_free_space_big_enough(*size)?;
 
-            while cur_offset != u64::MAX{
-                let cur_disk_edge: DiskEdge = self.file_manager.reading_bytes(cur_offset, cur_offset + size_of::<DiskEdge>() as u64, |b: &[u8]| *bytemuck::from_bytes(b))?;
-
-                if cur_disk_edge.weight_len >= *size{
-                    self.skip_cur(&prev_offset, &cur_offset)?;
-                    if let Some(ref mut t) = self.tx {
-                        t.zero_mmap(self.file_id, cur_offset, cur_offset + *size);
-                    } else {
-                        self.file_manager.zeroing_mmap(cur_offset, cur_offset + *size)?;
-                    }
-                    if cur_disk_edge.weight_len > *size{
-                        let new_offset = cur_offset + *size;
-                        let new_cap = cur_disk_edge.weight_len - *size;
-                        self.split_capacity_into_power_of_2s(&new_offset, &new_cap);
-                    }
-                    return Ok(cur_offset);
-                }
-                prev_offset = cur_offset;
-                cur_offset = cur_disk_edge.weight_offset;
+            if offset != u64::MAX{
+                self.carve_chunk(offset, *size)?;
+                return Ok(offset);
             }
         }
         Ok(self.bump_allocate(size))

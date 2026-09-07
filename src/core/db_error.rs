@@ -31,6 +31,8 @@ pub enum DbError {
     Poisoned,
 
     OutOfBoundIndexing {offset: u64, len: u64},
+
+    AllocatorError
 }
 
 impl fmt::Display for DbError {
@@ -42,6 +44,7 @@ impl fmt::Display for DbError {
             DbError::Poisoned => write!(f, "Database is poisoned due to a previous fatal I/O error"),
             DbError::WalThreadDead => write!(f, "WAL thread is dead and cant write in log"),
             DbError::OutOfBoundIndexing { offset, len } => write!(f, "Tried an out of bound indexing at offset: {} and of length: {}", offset, len),
+            DbError::AllocatorError => write!(f, "The free list inside the allocator is corrupted and couldnt find a chunk of free space")
         }
     }
 }
