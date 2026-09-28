@@ -350,10 +350,13 @@ where
 
     /// Adds multiple weighted, undirected edges in bulk, skipping any whose
     /// source or target node does not exist.
-    pub fn bulk_add_edge(&mut self, edges: &[(K, K, W)]) -> Result<(), GraphError>{
+    pub fn bulk_add_edge(&mut self, edges: &[(K, EdgeView<K, W>)]) -> Result<(), GraphError>{
         let mut hashed_edges: Vec<(u64, u64, W)> = Vec::with_capacity(MAX_CAPACITY_BULK);
 
-        for (source, target, weight) in edges{
+        for (source, edge) in edges{
+
+            let target = edge.get_target();
+            let weight = edge.get_weight();
             if hashed_edges.len() >= MAX_CAPACITY_BULK{
                 Weighted::bulk_add_edge(&mut self.adjacency_list, &hashed_edges)?;
                 hashed_edges.clear();
@@ -434,6 +437,17 @@ where
         let edge = Weighted::remove_edge(&mut self.adjacency_list, source_hashed, target_hashed, &weight)?;
 
         Ok(EdgeView::new(&self.adjacency_list.reverse_hashing_get_node_data(edge.get_target()).unwrap(), &edge.get_weight()))
+    }
+
+
+    pub fn from_edges(backend: B, edges: &[(K, EdgeView<K, W>)]) -> Result<Self, GraphError>{
+        let mut graph = Self::with_backend(backend);
+        let unique: AHashSet<&K> = edges.iter()
+                                       .flat_map( |(source, edge)| {[edge.get_target(), source]}).collect();
+
+        graph.bulk_add_node(unique.into_iter().cloned().collect::<Vec<_>>().as_ref())?;
+        graph.bulk_add_edge(edges)?;
+        Ok(graph)
     }
 }
 

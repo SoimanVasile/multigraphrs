@@ -9,7 +9,7 @@ use crate::storage::disk_storage::from_disk_bytes::AsDiskBytes;
 /// so it only needs to keep track of its `target` and `weight`.
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
-pub struct Edge<W>
+pub(crate) struct Edge<W>
 where
     W: Clone + std::cmp::PartialEq + AsDiskBytes + FromDiskBytes,
 {
