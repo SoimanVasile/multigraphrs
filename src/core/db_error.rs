@@ -1,4 +1,6 @@
-use std::fmt;
+use std::{fmt, sync::mpsc::{RecvError, SendError}};
+
+use crate::storage::disk_storage::file_manager::{FMRequest, FMResponse};
 
 /// Represents fatal engine, I/O, and storage errors.
 ///
@@ -27,6 +29,10 @@ pub enum DbError {
     /// Once poisoned, the database will not accept any further write operations.
     /// The only safe action is to close and re-open the database.
     Poisoned,
+
+    OutOfBoundIndexing {offset: u64, len: u64},
+
+    AllocatorError
 }
 
 impl fmt::Display for DbError {
@@ -37,6 +43,8 @@ impl fmt::Display for DbError {
             DbError::InvalidFileId(id) => write!(f, "Invalid internal file ID: {}", id),
             DbError::Poisoned => write!(f, "Database is poisoned due to a previous fatal I/O error"),
             DbError::WalThreadDead => write!(f, "WAL thread is dead and cant write in log"),
+            DbError::OutOfBoundIndexing { offset, len } => write!(f, "Tried an out of bound indexing at offset: {} and of length: {}", offset, len),
+            DbError::AllocatorError => write!(f, "The free list inside the allocator is corrupted and couldnt find a chunk of free space")
         }
     }
 }
@@ -53,6 +61,24 @@ impl std::error::Error for DbError {
 impl From<std::io::Error> for DbError {
     fn from(err: std::io::Error) -> Self {
         DbError::Io(err)
+    }
+}
+
+impl From<RecvError> for DbError {
+    fn from(_: RecvError) -> Self {
+        DbError::WalThreadDead
+    }
+}
+
+impl From<SendError<FMRequest>> for DbError {
+    fn from(_: SendError<FMRequest>) -> Self {
+        DbError::WalThreadDead
+    }
+}
+
+impl From<SendError<FMResponse>> for DbError {
+    fn from(_: SendError<FMResponse>) -> Self{
+        DbError::WalThreadDead
     }
 }
 

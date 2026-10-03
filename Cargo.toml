@@ -14,6 +14,7 @@ readme = "README.md"
 bytemuck = { version = "1.25.0", features = ["derive"] }
 memmap2 = "0.9.10"
 ahash = "0.8.11"
+arc-swap = "1.9.2"
 
 [profile.profiling]
 inherits = "release"
@@ -21,3 +22,20 @@ debug = true
 
 [dev-dependencies]
 tempfile = "3"
+
+[lints.clippy]
+pedantic = {level = "deny", priority = -1}
+nursery = { level = "deny", priority = -1}
+unwrap_used = "deny"
+expected_used = "deny"
+indexing_slicing = "deny"
+arithmetic_side_effects = "deny"
+unreachable = "deny"
+unimplemented = "deny"
+unchecked_time_suctraction = "deny"
+todo = "deny"
+string_slice = "deny"
+panic_in_result_fn = "deny"
+panic = "deny"
+exit = "deny"
+as_conversions = "deny"

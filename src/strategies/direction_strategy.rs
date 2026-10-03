@@ -25,7 +25,8 @@ where
     ///
     /// # Errors
     /// Returns a [`GraphError`] if the underlying storage operations fail, such as if a node is missing.
-    fn add_edge(graph: &mut impl StorageBackend<K, W>, source: u64, target: u64, weight: &W) -> Result<Edge<W>, GraphError>;
+    fn add_edge<S: StorageBackend<K, W>>(graph: &mut S, source: u64, target: u64, weight: &W) -> Result<Edge<W>, GraphError>
+    where GraphError: From<S::Error>;
 
     /// Efficiently adds multiple edges to the graph in a single operation.
     /// 
@@ -36,7 +37,8 @@ where
     ///
     /// # Errors
     /// Returns a [`GraphError`] if the bulk insertion into the storage backend fails.
-    fn bulk_add_edge(graph: &mut impl StorageBackend<K, W>, hashed_nodes: &[(u64, u64, W)]) -> Result<(), GraphError>;
+    fn bulk_add_edge<S: StorageBackend<K, W>>(graph: &mut S, hashed_nodes: &[(u64, u64, W)]) -> Result<(), GraphError>
+    where GraphError: From<S::Error>;
 
     /// Efficiently removes multiple edges from the graph in a single operation.
     /// 
@@ -45,7 +47,8 @@ where
     ///
     /// # Errors
     /// Returns a [`GraphError`] if the bulk deletion from the storage backend fails.
-    fn bulk_remove_edge(graph: &mut impl StorageBackend<K, W>, edges: &[(u64, u64, W)]) -> Result<(), GraphError>;
+    fn bulk_remove_edge<S: StorageBackend<K, W>>(graph: &mut S, edges: &[(u64, u64, W)]) -> Result<(), GraphError>
+    where GraphError: From<S::Error>;
 
     /// Removes a single edge between `source` and `target` matching the given `weight`.
     /// 
@@ -59,7 +62,8 @@ where
     ///
     /// # Errors
     /// Returns a [`GraphError`] if the edge does not exist or if a storage operation fails.
-    fn remove_edge(graph: &mut impl StorageBackend<K, W>, source: u64, target: u64, weight: &W) -> Result<Edge<W>, GraphError>;
+    fn remove_edge<S: StorageBackend<K, W>>(graph: &mut S, source: u64, target: u64, weight: &W) -> Result<Edge<W>, GraphError>
+    where GraphError: From<S::Error>;
 
     /// Removes a node and all of its connected edges from the graph.
     /// 
@@ -71,5 +75,6 @@ where
     ///
     /// # Errors
     /// Returns a [`GraphError`] if the node removal or associated edge cleanup fails in the storage backend.
-    fn remove_node(graph: &mut impl StorageBackend<K, W>, node_id: u64) -> Result<(), GraphError>;
+    fn remove_node<S: StorageBackend<K, W>>(graph: &mut S, node_id: u64) -> Result<(), GraphError>
+    where GraphError: From<S::Error>;
 }

@@ -1,3 +1,4 @@
+use crate::GraphError;
 use crate::dictionary::dictionary_strategy::DictionaryStrategy;
 use crate::dictionary::ram_dictionary::RamDictionary;
 use crate::storage::disk_storage::from_disk_bytes::FromDiskBytes;
@@ -6,7 +7,6 @@ use std::collections::VecDeque;
 use std::hash::Hash;
 
 use crate::core::edge::Edge;
-use crate::core::graph_errors::GraphError;
 use crate::storage::storage_backend::StorageBackend;
 
 /// In-memory graph storage backed by a `Vec<Vec<Edge<W>>>`.
@@ -62,6 +62,7 @@ where
     W: Clone + std::cmp::PartialEq + AsDiskBytes + FromDiskBytes,
     K: Clone + Eq + AsDiskBytes + FromDiskBytes + Hash,
 {
+    type Error = GraphError;
     type EdgeIter<'a> = std::vec::IntoIter<Edge<W>> where Self: 'a, W: 'a;
 
     /// Appends a clone of the given edge to the specified node's adjacency list, incrementing the total edge count.
@@ -128,8 +129,8 @@ where
     ///
     /// # Panics
     /// Panics if the `node` index is out of bounds.
-    fn node_len(&self, node: &u64) -> usize{
-        self.adjacency_list[*node as usize].len()
+    fn node_len(&self, node: &u64) -> Result<usize, GraphError>{
+        Ok(self.adjacency_list[*node as usize].len())
     }
 
     /// Returns an iterator over the edges of a specific node.
@@ -207,12 +208,12 @@ where
         }
     }
 
-    fn node_count(&self) -> usize {
-        self.number_of_nodes
+    fn node_count(&self) -> Result<usize, GraphError> {
+        Ok(self.number_of_nodes)
     }
 
-    fn edge_count(&self) ->usize{
-        self.number_of_edges
+    fn edge_count(&self) -> Result<usize, GraphError>{
+        Ok(self.number_of_edges)
     }
 
     fn increment_node_counter(&mut self) -> Result<(), GraphError> {
@@ -248,8 +249,8 @@ where
         Ok(())
     }
 
-    fn get_reverse_edges(&self, node: &u64) -> Vec<u64> {
-        self.reverse_adjacency_list[*node as usize].clone()
+    fn get_reverse_edges(&self, node: &u64) -> Result<Vec<u64>, GraphError> {
+        Ok(self.reverse_adjacency_list[*node as usize].clone())
     }
 
     fn clear_reverse_edges(&mut self, node: &u64) -> Result<(), GraphError> {
@@ -284,8 +285,8 @@ where
     }
 
     fn hashed_nodes_insert(&mut self, key: K, node_id: u64) -> Result<(), GraphError> {
-        self.hashed_nodes.insert(key, node_id).map_err(|e| {
-            GraphError::Db(e)
+        self.hashed_nodes.insert(key, node_id).map_err(|_| {
+            GraphError::NodeNotFound
         })?;
         Ok(())
     }
@@ -295,8 +296,8 @@ where
     }
 
     fn hashed_nodes_remove(&mut self, key: &K) -> Result<Option<u64>, GraphError> {
-        self.hashed_nodes.remove(key).map_err(|e| {
-            GraphError::Db(e)
+        self.hashed_nodes.remove(key).map_err(|_| {
+            GraphError::NodeNotFound
         })
     }
 
@@ -305,9 +306,8 @@ where
     }
 
     fn hashed_nodes_bulk_insert(&mut self, nodes: &[(K, u64)]) -> Result<(), GraphError> {
-        self.hashed_nodes.bulk_insert(nodes).map_err(|e| {
-            GraphError::Db(e)
-        })
+        self.hashed_nodes.bulk_insert(nodes);
+        Ok(())
     }
 }
 

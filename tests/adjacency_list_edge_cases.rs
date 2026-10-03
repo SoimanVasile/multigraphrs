@@ -17,11 +17,11 @@ fn test_ram_storage_edge_cases() {
 
     // Test reverse edges
     storage.add_reverse_edge(&node2, &node1).unwrap();
-    assert_eq!(storage.get_reverse_edges(&node2), vec![node1]);
+    assert_eq!(storage.get_reverse_edges(&node2).unwrap(), vec![node1]);
 
     // Test removing reverse edge
     storage.remove_reverse_edge(&node2, &node1).unwrap();
-    assert!(storage.get_reverse_edges(&node2).is_empty());
+    assert!(storage.get_reverse_edges(&node2).unwrap().is_empty());
 
     // Test removing a non-existent reverse edge (should not panic)
     storage.remove_reverse_edge(&node2, &999).unwrap();
@@ -32,7 +32,7 @@ fn test_ram_storage_edge_cases() {
 
     // Free node id
     storage.free_node_id(&node2).unwrap();
-    assert_eq!(storage.node_count(), 1);
+    assert_eq!(storage.node_count().unwrap(), 1);
     
     // Reusing the freed node ID
     let reused = storage.add_node().unwrap();
@@ -40,7 +40,7 @@ fn test_ram_storage_edge_cases() {
     
     // Test increment node counter
     storage.increment_node_counter().unwrap();
-    assert_eq!(storage.node_count(), 3);
+    assert_eq!(storage.node_count().unwrap(), 3);
 }
 
 #[test]
@@ -50,13 +50,13 @@ fn test_remove_edge_by_target() {
     let node2 = storage.add_node().unwrap();
 
     storage.add_edge_to_node(&node1, &Edge::new(node2, &100));
-    assert_eq!(storage.edge_count(), 1);
+    assert_eq!(storage.edge_count().unwrap(), 1);
     
     // Test remove edge by target
     storage.remove_edge_by_target(&node1, &node2).unwrap();
-    assert_eq!(storage.edge_count(), 0);
+    assert_eq!(storage.edge_count().unwrap(), 0);
     
     // Removing by target when it doesn't exist
     storage.remove_edge_by_target(&node1, &node2).unwrap();
-    assert_eq!(storage.edge_count(), 0);
+    assert_eq!(storage.edge_count().unwrap(), 0);
 }

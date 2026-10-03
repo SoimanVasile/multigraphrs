@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{convert::Infallible, fmt};
 
 use crate::core::db_error::DbError;
 
@@ -70,5 +70,13 @@ impl PartialEq for GraphError {
             (Self::Db(d1), Self::Db(d2)) => d1 == d2,
             _ => false,
         }
+    }
+}
+
+impl From<Infallible> for GraphError {
+    fn from(err: Infallible) -> Self {
+        // Since Infallible cannot exist, we use an empty match 
+        // to prove to the compiler this code is unreachable.
+        match err {} 
     }
 }

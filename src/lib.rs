@@ -94,6 +94,7 @@ where
     W: Clone + std::cmp::PartialEq + AsDiskBytes + FromDiskBytes,
     S: DirectionStrategy<K, W>,
     B: StorageBackend<K, W>,
+    GraphError: From<B::Error>,
 {
     /// Creates an empty [`MultiGraph`] backed by the given storage.
     ///
@@ -101,7 +102,7 @@ where
     /// call this with a default backend. Use this directly when you need a
     /// custom backend like [`DiskStorage`].
     pub fn with_backend(backend: B) -> Self {
-        let node_count = backend.node_count();
+        let node_count = backend.node_count().unwrap_or(0);
         MultiGraph {
             adjacency_list: backend,
             node_count,
@@ -216,7 +217,7 @@ where
     /// Returns [`GraphError::NodeNotFound`] if the node is not in the graph.
     pub fn degree(&self, source: &K) -> Result<usize, GraphError>{
         match self.adjacency_list.hashed_nodes_get(source)?{
-            Some(n) => Ok(self.adjacency_list.node_len(&n)),
+            Some(n) => Ok(self.adjacency_list.node_len(&n)?),
             None => Err(GraphError::NodeNotFound),
         }
     }
@@ -245,7 +246,7 @@ where
 
     /// Returns `true` if a node with the given key exists in the graph.
     pub fn contains_node(&self, key: &K) -> Result<bool, GraphError>{
-        self.adjacency_list.hashed_nodes_contains_key(key)
+        Ok(self.adjacency_list.hashed_nodes_contains_key(key)?)
     }
 
     /// Returns the total number of nodes currently in the graph.
@@ -258,7 +259,7 @@ where
     /// For undirected strategies each logical connection is counted as **two**
     /// internal edges (one per direction).
     pub fn edge_count(&self) -> usize{
-        self.adjacency_list.edge_count()
+        self.adjacency_list.edge_count().unwrap_or(0)
     }
 
     /// Returns an iterator over all nodes and their edges.
@@ -319,6 +320,7 @@ where
     K: Eq + Hash + Clone + AsDiskBytes + FromDiskBytes,
     W: Clone + std::cmp::PartialEq + AsDiskBytes + FromDiskBytes,
     B: StorageBackend<K, W>,
+    GraphError: From<B::Error>,
 {
 
     /// Adds a weighted, undirected edge between `source` and `target`.
@@ -452,6 +454,7 @@ where
     K: Eq + Hash + Clone + AsDiskBytes + FromDiskBytes,
     W: Clone + std::cmp::PartialEq + AsDiskBytes + FromDiskBytes,
     B: StorageBackend<K, W>,
+    GraphError: From<B::Error>,
 {
 
     /// Adds a directed edge from `source` to `target` with the given `weight`.
@@ -548,6 +551,7 @@ impl<K, B> MultiGraph<K, u32, Directed, B>
 where
     K: Eq + Hash + Clone + AsDiskBytes + FromDiskBytes,
     B: StorageBackend<K, u32>,
+    GraphError: From<B::Error>,
 {
 
     /// Adds a directed edge from `source` to `target` with weight `1`.
@@ -676,6 +680,7 @@ impl<K, B> MultiGraph<K, u32, Undirected, B>
 where
     K: Eq + Hash + Clone + AsDiskBytes + FromDiskBytes,
     B: StorageBackend<K, u32>,
+    GraphError: From<B::Error>,
 {
 
     /// Adds an undirected edge between `source` and `target` with weight `1`.

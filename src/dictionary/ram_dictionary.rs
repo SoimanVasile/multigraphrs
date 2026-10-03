@@ -1,6 +1,6 @@
-use crate::core::db_error::DbError;
 use crate::storage::disk_storage::from_disk_bytes::FromDiskBytes;
 use crate::storage::disk_storage::from_disk_bytes::AsDiskBytes;
+use std::convert::Infallible;
 use std::hash::Hash;
 
 use ahash::AHashMap;
@@ -22,6 +22,7 @@ impl<K> DictionaryStrategy<K> for RamDictionary<K>
 where
     K: Clone + Hash + Eq + AsDiskBytes + FromDiskBytes
 {
+    type Error = Infallible;
     /// Checks if a node exists in the in-memory graph.
     ///
     /// # Arguments
@@ -35,7 +36,7 @@ where
     /// # Arguments
     /// * `key` - The node data to insert.
     /// * `node_id` - The internal ID to associate with the node data.
-    fn insert ( &mut self, key: K, node_id: u64 ) -> Result<Option<u64>, DbError>{
+    fn insert ( &mut self, key: K, node_id: u64 ) -> Result<Option<u64>, Infallible>{
         self.resize_reverse(node_id);
         self.reverese_hashed_nodes[node_id as usize] = Some(key.clone());
         Ok(self.hashed_nodes.insert( key, node_id))
@@ -53,7 +54,7 @@ where
     ///
     /// # Arguments
     /// * `key` - The node data to remove from the dictionary.
-    fn remove( &mut self, key: &K) -> Result<Option<u64>, DbError>{
+    fn remove( &mut self, key: &K) -> Result<Option<u64>, Infallible>{
         let id = self.hashed_nodes.remove(key);
 
         if let Some(idx) = id{
@@ -70,7 +71,7 @@ where
         self.reverese_hashed_nodes[id as usize].clone()
     }
 
-    fn bulk_insert(&mut self, nodes: &[(K, u64)]) -> Result<(), DbError> {
+    fn bulk_insert(&mut self, nodes: &[(K, u64)]) -> Result<(), Infallible> {
         for (data, id) in nodes{
             self.insert(data.clone(), *id).unwrap();
         }

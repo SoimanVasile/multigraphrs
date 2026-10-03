@@ -28,8 +28,8 @@ fn test_wal_crash_recovery() {
         let edge = Edge::new(n2, &42);
         backend.add_edge_to_node(&n1, &edge).unwrap();
         
-        assert_eq!(backend.edge_count(), 1);
-        assert_eq!(backend.node_count(), 2);
+        assert_eq!(backend.edge_count().unwrap(), 1);
+        assert_eq!(backend.node_count().unwrap(), 2);
     }
     
     // 2. Simulate a mid-transaction crash by appending a half-written transaction to wal.bin
@@ -50,13 +50,13 @@ fn test_wal_crash_recovery() {
     {
         let mut backend = DiskStorage::<u32, u32>::new(&dir);
         
-        assert_eq!(backend.edge_count(), 1);
-        assert_eq!(backend.node_count(), 2);
+        assert_eq!(backend.edge_count().unwrap(), 1);
+        assert_eq!(backend.node_count().unwrap(), 2);
         
         // Add more edges to prove it's still healthy
         let n3 = backend.add_node().unwrap();
         let edge2 = Edge::new(n3, &99);
         backend.add_edge_to_node(&1, &edge2).unwrap();
-        assert_eq!(backend.edge_count(), 2);
+        assert_eq!(backend.edge_count().unwrap(), 2);
     }
 }
