@@ -12,6 +12,8 @@ pub const DISK_NODE_INITIAL_CAPACITY: u64= 128;
 #[derive(Copy, Clone, Pod, Zeroable)]
 #[repr(C)]
 pub struct DiskNode{
+    /// Sequence lock for concurrent read/write. Even = unlocked, Odd = locked for writing.
+    pub sequence: u64,
     /// Zero-based node index used for position calculations.
     pub node_idx: u64,
     /// Byte offset of the forward edge block in `structure.bin` (`u64::MAX` = uninitialized).
@@ -36,7 +38,7 @@ impl DiskNode{
     /// `list_edges_offset` provides the byte offset of the forward edge block in `structure.bin`.
     /// `list_reverse_edges_offset` provides the byte offset of the reverse edge block in `reverse_structure.bin`.
     pub fn new(node_idx: u64, list_edges_offset: u64,list_reverse_edges_offset: u64) -> Self{
-        Self { node_idx, list_edges_offset, number_of_edges: 0, list_reverse_edges_offset, number_of_reverse_edges: 0, capacity: DISK_NODE_INITIAL_CAPACITY, reverse_capacity: DISK_NODE_INITIAL_CAPACITY}   
+        Self { sequence: 0, node_idx, list_edges_offset, number_of_edges: 0, list_reverse_edges_offset, number_of_reverse_edges: 0, capacity: DISK_NODE_INITIAL_CAPACITY, reverse_capacity: DISK_NODE_INITIAL_CAPACITY}   
     }
     /// Returns the byte offset of this node's forward edge block.
     pub fn get_edge_offset(&self) -> u64{
@@ -75,6 +77,43 @@ impl DiskNode{
         self.reverse_capacity >= (self.number_of_reverse_edges + 1) * size_of::<u64>() as u64
     }
 
+    /// Returns a reference to the sequence as an AtomicU64, allowing atomic operations
+    /// directly on the memory-mapped file.
+    pub fn sequence_atomic(&self) -> &std::sync::atomic::AtomicU64 {
+        unsafe {
+            &*( (&self.sequence) as *const u64 as *const std::sync::atomic::AtomicU64 )
+        }
+    }
+
+    /// Acquires the write lock using a spinlock. Changes sequence from Even to Odd.
+    pub fn lock_for_write(&self) {
+        let atomic_seq = self.sequence_atomic();
+        let mut current_seq = atomic_seq.load(std::sync::atomic::Ordering::Relaxed);
+        loop {
+            if current_seq % 2 != 0 {
+                std::hint::spin_loop();
+                current_seq = atomic_seq.load(std::sync::atomic::Ordering::Relaxed);
+                continue;
+            }
+            match atomic_seq.compare_exchange_weak(
+                current_seq,
+                current_seq + 1,
+                std::sync::atomic::Ordering::Acquire,
+                std::sync::atomic::Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(actual) => current_seq = actual,
+            }
+        }
+    }
+
+    /// Releases the write lock. Changes sequence from Odd to Even.
+    pub fn unlock_for_write(&self) {
+        let atomic_seq = self.sequence_atomic();
+        let current_seq = atomic_seq.load(std::sync::atomic::Ordering::Relaxed);
+        // It should be odd right now
+        atomic_seq.store(current_seq + 1, std::sync::atomic::Ordering::Release);
+    }
 }
 
 
