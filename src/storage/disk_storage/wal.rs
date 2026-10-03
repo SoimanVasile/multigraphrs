@@ -309,10 +309,10 @@ fn replay_file(path: &PathBuf, files: &mut DBFiles) -> Result<(), DbError> {
                 };
                 match record {
                     WalRecord::Write { offset, bytes, .. } => {
-                        fm.writing_bytes_to_mmap(offset, offset + bytes.len() as u64, &bytes);
+                        fm.writing_bytes_to_mmap(offset, offset + bytes.len() as u64, &bytes)?;
                     }
                     WalRecord::Zero { offset, end, .. } => {
-                        fm.zeroing_mmap(offset, end);
+                        fm.zeroing_mmap(offset, end)?;
                     }
                     WalRecord::CopyWithin { src_start, src_end, dest_start, .. } => {
                         fm.copy_within(src_start, src_end, dest_start);

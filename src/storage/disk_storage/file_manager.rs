@@ -40,36 +40,9 @@ fn create_mmap(file: &File) -> Result<MmapMut, Error>{
     }
 }
 
-/// This is a fat pointer for the write to be able to send to the worker thread as it doesnt use
-/// lifetime
-#[derive(Debug, Clone, Copy)]
-struct ZeroCopyBytes{
-    length: u64,
-    raw_pointer: *const [u8]
-}
-
-unsafe impl Send for ZeroCopyBytes{}
-
-impl ZeroCopyBytes{
-    /// Creates the fat pointer from a reference so the pointer is non-null.
-    ///
-    /// # Safety
-    ///
-    /// With the current architecture the fat pointer is safe as when a thread send some bytes to
-    /// write it needs to wait for the response so it cant drop the pointer
-    fn new(reference: &[u8]) -> Self{
-        Self {length: reference.len() as u64, raw_pointer: reference as *const [u8]}
-    }
-}
-
-
 /// All the requests that a thread can send to the worker thread
 #[derive(Debug, Clone)]
 enum FMTypeRequest{
-
-    /// It needs the raw pointer to the bytes to be able to write them into the file and right now
-    /// this operation is safe
-    Write(ZeroCopyBytes),
 
     /// Request to increease the file size and it gives the length of the file to be next
     IncreaseFileSize(u64),
@@ -84,7 +57,6 @@ enum FMTypeResponse
 {
     /// All the response dont need to give any information only the status that is found inside the
     /// [`FMResponse`] struct
-    Write,
     IncreaseFileSize,
     Flush,
 }
@@ -131,10 +103,12 @@ impl<'a> FMRequest{
 #[derive(Debug)]
 pub struct FileManager{
     sender: Sender<FMRequest>,
-    len: u64,
+    len: std::sync::atomic::AtomicU64,
     /// Is inside an Arc to give the mmap to the worker thread, but have a reference too to have
     /// instantenous reads
     mmap: Arc<ArcSwap<MmapMut>>,
+    /// Ensures only one thread attempts to resize at a time
+    resize_lock: std::sync::Mutex<()>,
 }
 
 impl FileManager{
@@ -160,7 +134,12 @@ impl FileManager{
             file_manager_worker_thread(file_path, thread_mmap, request);
         });
 
-            Ok((Self{sender, len: file.metadata().unwrap().len(), mmap: shared_mmap}, created))
+            Ok((Self{
+                sender,
+                len: std::sync::atomic::AtomicU64::new(file.metadata().unwrap().len()),
+                mmap: shared_mmap,
+                resize_lock: std::sync::Mutex::new(()),
+            }, created))
     }
 
     
@@ -173,7 +152,7 @@ impl FileManager{
     ///
     /// # Panics
     /// Panics if `start > end` or if `end` exceeds the actual length of the memory map.
-    pub fn zeroing_mmap(&mut self, start: u64, end: u64) -> Result<(), DbError>{
+    pub fn zeroing_mmap(&self, start: u64, end: u64) -> Result<(), DbError>{
         self.writing_bytes_to_mmap(start, end, &vec![0; (end-start) as usize])
         // self.mmap[start as usize .. end as usize].fill(0);
     }
@@ -191,18 +170,14 @@ impl FileManager{
     /// # Panics
     /// Panics if `start > end` or if `end` exceeds the actual length of the memory map or if the length
     /// of the bytes is different from the range
-    pub fn writing_bytes_to_mmap(&mut self, start: u64, _end: u64,  bytes: &[u8]) -> Result<(), DbError>{
-        let (send, receiv) = channel();
-        let request = FMRequest::new(
-            FMTypeRequest::Write(ZeroCopyBytes::new(bytes)),
-            start,
-            send
-        );
-
-        self.sender.send(request)?;
-        let res = receiv.recv()?;
-
-        res.status
+    pub fn writing_bytes_to_mmap(&self, start: u64, _end: u64,  bytes: &[u8]) -> Result<(), DbError>{
+        let guard = self.mmap.load();
+        unsafe {
+            let mut_ptr = guard.as_ptr() as *mut u8;
+            let mmap_slice = std::slice::from_raw_parts_mut(mut_ptr, guard.len());
+            mmap_slice[start as usize .. start as usize + bytes.len()].copy_from_slice(bytes);
+        }
+        Ok(())
     }
 
     /// Reads a slice of bytes from the memory map.
@@ -244,7 +219,7 @@ impl FileManager{
     ///
     /// # Panics
     /// Panics if either the source range or the destination range is out of bounds.
-    pub fn copy_within(&mut self, _src_start: u64, _src_end: u64, _dest_start: u64){
+    pub fn copy_within(&self, _src_start: u64, _src_end: u64, _dest_start: u64){
         todo!()
         // self.mmap.copy_within(src_start as usize .. src_end as usize, dest_start as usize);
     }
@@ -253,11 +228,14 @@ impl FileManager{
     ///
     /// # Errors
     /// Returns a [`DbError`] if file metadata cannot be read, resizing fails, or mapping fails.
-    pub fn increase_file_size(&mut self) -> Result<u64, DbError>{
+    pub fn increase_file_size(&self) -> Result<u64, DbError>{
+        // Only one thread can resize at a time
+        let _lock = self.resize_lock.lock().unwrap();
+
+        let current_len = self.file_len()?;
+        let next_length = self.check_next_size(current_len)?;
 
         let (sender, recv) = channel();
-        let next_length = self.check_next_size(self.file_len()?)?;
-
         let request = FMRequest::new(
             FMTypeRequest::IncreaseFileSize(next_length),
             u64::MAX,
@@ -270,7 +248,7 @@ impl FileManager{
 
         match response._type{
             FMTypeResponse::IncreaseFileSize  => {
-                self.len = next_length;
+                self.len.store(next_length, std::sync::atomic::Ordering::SeqCst);
                 Ok(next_length)
             },
             _ => Err(DbError::WalThreadDead),
@@ -290,7 +268,7 @@ impl FileManager{
     /// # Errors
     /// Returns a [`DbError`] (though currently infallible) for API consistency.
     pub fn file_len(&self) -> Result<u64, DbError>{
-        Ok(self.len)
+        Ok(self.len.load(std::sync::atomic::Ordering::SeqCst))
         // We can just return the length of the memory map, which is identical to the file's length.
         // This avoids making a statx syscall to the OS.
         // Ok(self.mmap.len() as u64)
@@ -323,10 +301,11 @@ fn file_manager_worker_thread(file_path: PathBuf, arc_mmap: Arc<ArcSwap<MmapMut>
     let mut requests: Vec<FMRequest> = Vec::with_capacity(1<<15);
     loop{
         
-        get_batch(&mut requests, &rec);
+        if !get_batch(&mut requests, &rec) {
+            return;
+        }
         for req in requests.iter_mut(){
             match req._type{
-                FMTypeRequest::Write(pointer) => if write_req(&arc_mmap, &req, &pointer).is_err(){ return; },
                 FMTypeRequest::IncreaseFileSize(length) => if increase_file_size_req(&arc_mmap, &req, &file, length).is_err() { return; },
                 FMTypeRequest::Flush => if flush_req(&arc_mmap, &req).is_err() { return; }
             }
@@ -334,27 +313,17 @@ fn file_manager_worker_thread(file_path: PathBuf, arc_mmap: Arc<ArcSwap<MmapMut>
     }
 }
 
-fn get_batch(requests: &mut Vec<FMRequest>, rec: &Receiver<FMRequest>){
+fn get_batch(requests: &mut Vec<FMRequest>, rec: &Receiver<FMRequest>) -> bool {
     requests.clear();
-    requests.push(rec.recv().unwrap());
+    match rec.recv() {
+        Ok(req) => requests.push(req),
+        Err(_) => return false, // Channel closed
+    }
 
     while let Ok(req) = rec.try_recv(){
         requests.push(req);
     }
-
-}
-
-fn write_req(arc_mmap: &ArcSwap<MmapMut>, req: &FMRequest, pointer: &ZeroCopyBytes) -> Result<(), DbError>{
-    let guard = arc_mmap.load();
-    let offset = req.offset;
-    let reference = unsafe { &*pointer.raw_pointer};
-
-    unsafe {
-        let mut_ptr = guard.as_ptr() as *mut u8;
-        let mmap = std::slice::from_raw_parts_mut(mut_ptr, guard.len());
-        mmap[offset as usize .. offset as usize + pointer.length as usize].copy_from_slice(reference);
-    }
-    Ok(req.sender.send(FMResponse::new(FMTypeResponse::Write, Ok(())))?)
+    true
 }
 
 fn increase_file_size_req(arc_mmap: &ArcSwap<MmapMut>, req: &FMRequest, file: &File, length: u64) -> Result<(), DbError>{

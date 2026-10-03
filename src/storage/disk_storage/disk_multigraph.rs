@@ -399,7 +399,10 @@ where
         let bytes = disk_node.convert_to_bytes();
 
         while offset + bytes.len() as u64 > self.file_manager_node.file_len()?{
-            if let Some(ref mut t) = tx { t.increase_file_size(FileId::Node, self.file_manager_node.check_next_size(self.file_manager_node.file_len()?)?); }            self.file_manager_node.increase_file_size()?;
+            if let Some(ref mut t) = tx { 
+                t.increase_file_size(FileId::Node, self.file_manager_node.check_next_size(self.file_manager_node.file_len()?)?); 
+            }
+            self.file_manager_node.increase_file_size()?;
         }
         if let Some(t) = tx {
             t.write_bytes(FileId::Node, offset, bytes);
