@@ -881,15 +881,16 @@ where
         if check_node_allocated(&disk_node, FileId::Structure).map_err(|e| { self.poison(); GraphError::from(e) })? {
                 allocated_disk_node(&mut disk_node, &mut self.file_manager_edge_structure, FileId::Structure, &mut superblock, &mut tx).map_err(|e| { self.poison(); GraphError::from(e) })?;            }
 
+        let weight_data_bytes: &[u8] = &edge.weight.as_disk_bytes();
+
         let data_offset = superblock.get_free_block_data();
-        let disk_edge: DiskEdge = DiskEdge::new(data_offset, std::mem::size_of::<W>() as u64, edge.get_target());
+        let disk_edge: DiskEdge = DiskEdge::new(data_offset, weight_data_bytes.len() as u64 , edge.get_target());
 
         self.write_disk_edge(&mut disk_node, &disk_edge, &mut superblock, Some(&mut tx)).map_err(|e| {
             self.poison();
             GraphError::Db(e)
         })?;
         
-        let weight_data_bytes: &[u8] = edge.convert_to_bytes();
 
         self.write_weight(weight_data_bytes, &data_offset, Some(&mut tx)).map_err(|e| {
             self.poison();
@@ -934,15 +935,16 @@ where
             if check_node_allocated(&disk_node, FileId::Structure).map_err(|e| { self.poison(); GraphError::from(e) })? {
                 allocated_disk_node(&mut disk_node, &mut self.file_manager_edge_structure, FileId::Structure, &mut super_block, &mut tx).map_err(|e| { self.poison(); GraphError::from(e) })?;            }
 
+            let weight_data_bytes: &[u8] = &edge.weight.as_disk_bytes();
+
             let data_offset = super_block.get_free_block_data();
-            let disk_edge: DiskEdge = DiskEdge::new(data_offset, std::mem::size_of::<W>() as u64, edge.get_target());
+            let disk_edge: DiskEdge = DiskEdge::new(data_offset, weight_data_bytes.len() as u64, edge.get_target());
 
             self.write_disk_edge(&mut disk_node, &disk_edge, &mut super_block, Some(&mut tx)).map_err(|e| {
                 self.poison();
                 GraphError::Db(e)
             })?;
             
-            let weight_data_bytes: &[u8] = edge.convert_to_bytes();
             self.write_weight(weight_data_bytes, &data_offset, Some(&mut tx)).map_err(|e| {
                 self.poison();
                 GraphError::Db(e)
