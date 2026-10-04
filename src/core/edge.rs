@@ -42,21 +42,6 @@ where
     pub fn get_weight(&self) -> W{
         self.weight.clone()
     }
-
-    /// Reinterprets the weight field as a raw byte slice for disk serialization.
-    ///
-    /// The returned slice is valid for the lifetime of `self`.
-    ///
-    /// # Safety
-    /// Uses `unsafe` pointer casting internally. This is sound only when `W`
-    /// is a plain-old-data type with no padding bytes that carry meaning.
-    pub fn convert_to_bytes(&self) -> &[u8]{
-        unsafe{
-        std::slice::from_raw_parts(
-            (&self.weight as *const W) as *const u8, 
-            std::mem::size_of::<W>())
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
