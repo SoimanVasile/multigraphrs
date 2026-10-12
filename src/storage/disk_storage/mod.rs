@@ -7,3 +7,4 @@ pub mod disk_multigraph;
 pub mod file_manager;
 pub mod allocator;
 pub mod wal;
+pub mod allocator_type;
