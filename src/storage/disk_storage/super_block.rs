@@ -203,6 +203,10 @@ impl SuperBlock {
         self.node_count.fetch_add(1, Ordering::AcqRel)
     }
 
+    pub fn sub_node_counter(&self, sub: u64){
+        self.node_count.fetch_sub(sub, Ordering::AcqRel);
+    }
+
     /// Atomically decrements the node count by one and returns the previous value.
     pub fn decrement_node_counter(&self) -> u64 {
         self.node_count.fetch_sub(1, Ordering::AcqRel)
@@ -223,9 +227,13 @@ impl SuperBlock {
         self.edge_count.fetch_add(1, Ordering::AcqRel)
     }
 
+    pub fn sub_edge_counter(&self, sub: u64){
+        self.edge_count.fetch_sub(sub, Ordering::AcqRel);
+    }
+
     /// Atomically decrements the edge count by `count` and returns the previous value.
-    pub fn decrement_edge_counter(&self, count: u64) -> u64 {
-        self.edge_count.fetch_sub(count, Ordering::AcqRel)
+    pub fn decrement_edge_counter(&self) -> u64 {
+        self.edge_count.fetch_sub(1, Ordering::AcqRel)
     }
 
     // --- Bump Allocation ---
