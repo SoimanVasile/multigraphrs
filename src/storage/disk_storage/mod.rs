@@ -8,3 +8,4 @@ pub mod file_manager;
 pub mod allocator;
 pub mod wal;
 pub mod allocator_type;
+pub mod builder_allocation_type;

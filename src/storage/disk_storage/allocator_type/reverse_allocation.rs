@@ -1,7 +1,15 @@
 use crate::storage::disk_storage::{allocator_type::allocation::AllocationType, super_block::SuperBlock};
 
-struct ReverseAllocation<'a>{
+pub struct ReverseAllocation<'a>{
     super_block: &'a SuperBlock
+}
+
+impl<'a> ReverseAllocation<'a>{
+    pub fn new(super_block: &'a SuperBlock) -> Self{
+        Self{
+            super_block
+        }
+    }
 }
 
 impl<'a> AllocationType for ReverseAllocation<'a>{

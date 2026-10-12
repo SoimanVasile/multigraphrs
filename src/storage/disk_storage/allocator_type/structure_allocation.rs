@@ -1,7 +1,15 @@
 use crate::storage::disk_storage::{allocator_type::allocation::AllocationType, super_block::SuperBlock};
 
-struct StructureAllocation<'a>{
+pub struct StructureAllocation<'a>{
     super_block: &'a SuperBlock
+}
+
+impl<'a> StructureAllocation<'a>{
+    pub fn new(super_block: &'a SuperBlock) -> Self{
+        Self{
+            super_block
+        }
+    }
 }
 
 impl<'a> AllocationType for StructureAllocation<'a>{

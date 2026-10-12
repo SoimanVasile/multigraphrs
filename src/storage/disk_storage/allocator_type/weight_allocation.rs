@@ -1,7 +1,15 @@
 use crate::storage::disk_storage::{allocator_type::allocation::AllocationType, super_block::SuperBlock};
 
-struct WeightAllocation<'a>{
+pub struct WeightAllocation<'a>{
     super_block: &'a SuperBlock
+}
+
+impl<'a> WeightAllocation<'a>{
+    pub fn new(super_block: &'a SuperBlock) -> Self{
+        Self{
+            super_block
+        }
+    }
 }
 
 impl<'a> AllocationType for WeightAllocation<'a>{
