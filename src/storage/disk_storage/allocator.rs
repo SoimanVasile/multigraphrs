@@ -85,7 +85,7 @@ impl<'a> AllocatedStruct<'a>
     /// # Arguments
     /// * `new_offset` - The starting offset of the remainder block to be split.
     /// * `new_cap` - The total capacity of the remainder to distribute into free lists.
-    fn split_capacity_into_power_of_2s(&mut self, new_offset: u64, new_cap: u64){
+    fn split_capacity_into_power_of_2s(&mut self, new_offset: u64, new_cap: u64) -> Result<(), DbError>{
         let mut cap_div: u64 = new_cap >> 7;
         let mut padding = 0;
         while cap_div != 0 {
@@ -101,12 +101,14 @@ impl<'a> AllocatedStruct<'a>
 
             let new_disk_edge: DiskEdge = DiskEdge::new(next_offset, chunk_size, u64::MAX);
 
-            self.write_disk_edges(&start_offset, &end_offset, &new_disk_edge);
+            self.write_disk_edges(&start_offset, &end_offset, &new_disk_edge)?;
             self.allocator_strategy.set_ith_header_list(header_index, start_offset);
 
             cap_div &= cap_div-1;
             padding += chunk_size;
         }
+
+        Ok(())
     }
 
     /// Removes the current block from the bucket's linked list.
@@ -126,7 +128,7 @@ impl<'a> AllocatedStruct<'a>
         let cap = prev_disk_edge.weight_len;
         let new_prev_disk_edge = DiskEdge::new(cur_disk_edge.weight_offset, cap, u64::MAX);
 
-        self.write_disk_edges(prev_offset, &(*prev_offset + cap), &new_prev_disk_edge);
+        self.write_disk_edges(prev_offset, &(*prev_offset + cap), &new_prev_disk_edge)?;
         Ok(())
     }
 
@@ -137,14 +139,16 @@ impl<'a> AllocatedStruct<'a>
     /// * `start_offset` - The starting offset for the front boundary tag.
     /// * `end_offset` - The end offset to place the back boundary tag just before it.
     /// * `disk_edge` - The boundary tag metadata to write.
-    fn write_disk_edges(&mut self, start_offset: &u64, end_offset: &u64, disk_edge: &DiskEdge){
+    fn write_disk_edges(&mut self, start_offset: &u64, end_offset: &u64, disk_edge: &DiskEdge) -> Result<(), DbError>{
         if let Some(ref mut t) = self.tx {
             t.write_bytes(self.file_id, *start_offset, disk_edge.convert_into_bytes());
             t.write_bytes(self.file_id, *end_offset - size_of::<DiskEdge>() as u64, disk_edge.convert_into_bytes());
         } else {
-            self.file_manager.writing_bytes_to_mmap(*start_offset, *start_offset+ size_of::<DiskEdge>() as u64, disk_edge.convert_into_bytes());
-            self.file_manager.writing_bytes_to_mmap(*end_offset - size_of::<DiskEdge>() as u64, *end_offset, disk_edge.convert_into_bytes());
+            self.file_manager.writing_bytes_to_mmap(*start_offset, *start_offset+ size_of::<DiskEdge>() as u64, disk_edge.convert_into_bytes())?;
+            self.file_manager.writing_bytes_to_mmap(*end_offset - size_of::<DiskEdge>() as u64, *end_offset, disk_edge.convert_into_bytes())?;
         }
+
+        Ok(())
     }
 
 
@@ -185,18 +189,20 @@ impl<'a> AllocatedStruct<'a>
 
     }
 
-    fn insert_free_space(&mut self, new_cap: u64, new_offset: u64, cur_disk_edge: &DiskEdge) {
+    fn insert_free_space(&mut self, new_cap: u64, new_offset: u64, cur_disk_edge: &DiskEdge) -> Result<(), DbError> {
 
         if new_cap & (new_cap-1) == 0{
             let new_disk_edge: DiskEdge = DiskEdge::new(cur_disk_edge.weight_offset, new_cap, cur_disk_edge.node);
 
-            self.write_disk_edges(&new_offset, &(new_offset + new_cap), &new_disk_edge);
+            self.write_disk_edges(&new_offset, &(new_offset + new_cap), &new_disk_edge)?;
             let new_index = find_index(&new_cap);
 
             self.allocator_strategy.set_ith_header_list(new_index, new_offset);
         }else{
-            self.split_capacity_into_power_of_2s(new_offset, new_cap);
+            self.split_capacity_into_power_of_2s(new_offset, new_cap)?;
         }
+
+        Ok(())
     }
 
     fn find_free_space_big_enough(&mut self, size: u64) -> Result<u64, DbError>{
@@ -234,7 +240,7 @@ impl<'a> AllocatedStruct<'a>
         if cap > size{
             let new_cap = cap - size;
             let new_offset = offset + size;
-            self.insert_free_space(new_cap, new_offset, &disk_edge);
+            self.insert_free_space(new_cap, new_offset, &disk_edge)?;
         }
         Ok(())
     }
@@ -287,16 +293,11 @@ impl<'a> AllocatedStruct<'a>
     ///
     /// # Panics
     /// Panics if the `file_id` is not `Structure` or `Reverse`.
-    pub fn deallocator(&mut self, disk_node: &DiskNode){
+    pub fn deallocator(&mut self, disk_node: &DiskNode) -> Result<(), DbError>{
         // We need to use list_edges_offset or list_reverse_edges_offset based on FileId!
-        let (offset, capacity) = match self.file_id {
-            FileId::Structure => (disk_node.get_edge_offset(), disk_node.get_capacity()),
-            FileId::Reverse => (disk_node.list_reverse_edges_offset, disk_node.reverse_capacity),
-            _ => panic!("AllocatedStruct only supports Structure and Reverse files"),
-        };
-        
+        let (offset, capacity) = get_disk_node_information(disk_node, &self.file_id);
         // Prevent panics if offset is MAX (node wasn't allocated)
-        if offset == u64::MAX { return; }
+        if offset == u64::MAX { return Ok(()); }
 
         let end_offset = offset + capacity;
 
@@ -305,9 +306,19 @@ impl<'a> AllocatedStruct<'a>
         let next_offset = self.allocator_strategy.get_ith_header_list(index);
         let disk_edge = DiskEdge::new(next_offset, capacity, u64::MAX);
 
-        self.write_disk_edges(&offset, &end_offset, &disk_edge);
+        self.write_disk_edges(&offset, &end_offset, &disk_edge)?;
         self.allocator_strategy.set_ith_header_list(index, offset);
+        Ok(())
     }
+}
+
+fn get_disk_node_information(disk_node: &DiskNode, file_id: &FileId) -> (u64, u64){
+    match file_id {
+            FileId::Structure => (disk_node.get_edge_offset(), disk_node.get_capacity()),
+            FileId::Reverse => (disk_node.list_reverse_edges_offset, disk_node.reverse_capacity),
+            _ => panic!("AllocatedStruct only supports Structure and Reverse files"),
+        }
+
 }
 
 #[cfg(test)]
@@ -332,16 +343,17 @@ mod tests {
 
     /// Helper: write a free-block header (DiskEdge used as free-list node) at `offset`.
     /// `next` is the next pointer, `block_size` is the capacity of the free block.
-    fn write_free_block(fm: &mut FileManager, offset: u64, next: u64, block_size: u64) {
+    fn write_free_block(fm: &mut FileManager, offset: u64, next: u64, block_size: u64) -> Result<(), DbError> {
         let edge = DiskEdge::new(next, block_size, u64::MAX);
         let bytes = edge.convert_into_bytes();
-        fm.writing_bytes_to_mmap(offset, offset + size_of::<DiskEdge>() as u64, bytes);
+        fm.writing_bytes_to_mmap(offset, offset + size_of::<DiskEdge>() as u64, bytes)?;
         // Write boundary tag at the end of the block
         fm.writing_bytes_to_mmap(
             offset + block_size - size_of::<DiskEdge>() as u64,
             offset + block_size,
             bytes,
-        );
+        )?;
+        Ok(())
     }
 
     /// Helper: read a DiskEdge from the mmap at the given offset.

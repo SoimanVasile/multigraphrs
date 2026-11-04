@@ -132,7 +132,7 @@ where
     }
 
 
-    pub fn apply_wal_transaction(&mut self, tx: &WalTransaction) {
+    pub fn apply_wal_transaction(&mut self, tx: &WalTransaction) -> Result<(), DbError>{
         for record in &tx.records {
             match record {
                 WalRecord::Write { file_id, offset, bytes } => {
@@ -141,7 +141,7 @@ where
                         FileId::NodeValue => &mut self.file_data, 
                         _ => continue,
                     };
-                    fm.writing_bytes_to_mmap(*offset, *offset + bytes.len() as u64, bytes);
+                    fm.writing_bytes_to_mmap(*offset, *offset + bytes.len() as u64, bytes)?;
                 }
                 WalRecord::Zero { file_id, offset, end } => {
                     let fm = match file_id {
@@ -149,7 +149,7 @@ where
                         FileId::NodeValue => &mut self.file_data,
                         _ => continue,
                     };
-                    fm.zeroing_mmap(*offset, *end);
+                    fm.zeroing_mmap(*offset, *end)?;
                 }
                 WalRecord::CopyWithin { file_id, src_start, src_end, dest_start } => {
                     let fm = match file_id {
@@ -163,6 +163,7 @@ where
                 }
             }
         }
+        Ok(())
     }
 }
 
@@ -212,8 +213,8 @@ where
             DbError::Io(e)
         })?;
 
-        self.file_node_id.writing_bytes_to_mmap(offset, offset + bytes.len() as u64, bytes);
-        self.file_data.writing_bytes_to_mmap(data_offset, data_offset + key_bytes.len() as u64, &key_bytes);
+        self.file_node_id.writing_bytes_to_mmap(offset, offset + bytes.len() as u64, bytes)?;
+        self.file_data.writing_bytes_to_mmap(data_offset, data_offset + key_bytes.len() as u64, &key_bytes)?;
         
         self.data_eof += key_bytes.len() as u64;
 
@@ -250,7 +251,7 @@ where
         tx.write_bytes(FileId::NodeId, offset, node_id_bytes);
         self.wal_manager.commit(&tx)?;
         
-        self.file_node_id.writing_bytes_to_mmap(offset, offset + node_id_bytes.len() as u64, node_id_bytes);
+        self.file_node_id.writing_bytes_to_mmap(offset, offset + node_id_bytes.len() as u64, node_id_bytes)?;
 
         Ok(self.hashing.remove(key))
     }
@@ -293,7 +294,7 @@ where
 
         self.wal_manager.commit(&tx)?;
 
-        self.apply_wal_transaction(&tx);
+        self.apply_wal_transaction(&tx)?;
         Ok(())
     }
 }

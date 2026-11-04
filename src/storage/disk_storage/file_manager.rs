@@ -86,7 +86,6 @@ impl<'a> FMResponse
 pub struct FMRequest
 {
     _type: FMTypeRequest,
-    offset: u64,
 
     /// This is the Sender which the worker thread will respond to give the status of the operation
     sender: Sender<FMResponse>
@@ -94,8 +93,8 @@ pub struct FMRequest
 
 impl<'a> FMRequest{
     /// A helper function that just builds the FMRequest
-    fn new(_type: FMTypeRequest, offset: u64, sender: Sender<FMResponse>) -> Self{
-        Self { _type, offset, sender }
+    fn new(_type: FMTypeRequest, sender: Sender<FMResponse>) -> Self{
+        Self { _type, sender }
     }
 }
 
@@ -238,7 +237,6 @@ impl FileManager{
         let (sender, recv) = channel();
         let request = FMRequest::new(
             FMTypeRequest::IncreaseFileSize(next_length),
-            u64::MAX,
             sender);
 
         self.sender.send(request)?;
@@ -284,7 +282,6 @@ impl FileManager{
 
         let request = FMRequest::new(
             FMTypeRequest::Flush,
-            u64::MAX,
             sender);
 
         self.sender.send(request)?;
