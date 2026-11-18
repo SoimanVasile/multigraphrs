@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicU32, Ordering};
+
 use crate::core::db_error::DbError;
 use crate::storage::disk_storage::allocator_type::allocation::AllocationType;
 use crate::storage::disk_storage::builder_allocation_type::AllocatorStrategy;
@@ -7,38 +9,9 @@ use crate::storage::disk_storage::{file_manager::FileManager};
 use crate::storage::disk_storage::{super_block::SuperBlock};
 use crate::storage::disk_storage::wal::{WalTransaction, FileId};
 
-const NUMBER_OF_LINKED_LIST: u64 = 7;
+const NUMBER_OF_LINKED_LIST: u32 = 7;
+const MIN_SIZE: u32 = 7;
 
-/// Determines the appropriate bucket index for a given allocation size.
-/// 
-/// # Arguments
-/// * `size` - The allocation size to find a bucket for. It must be an exact power of 2 starting at 128.
-///
-/// # Design Constraints
-/// This allocator makes a strict assumption that sizes passed to it are exactly 
-/// powers of 2, starting from 128 bytes (128, 256, 512, 1024, 2048, 4096, 8192+).
-/// This perfectly aligns with how `disk_edge` blocks double in size.
-/// 
-/// Because of this invariant, `find_index` maps these exact sizes perfectly to buckets:
-/// - 128 bytes -> Bucket 0
-/// - 256 bytes -> Bucket 1
-/// - 512 bytes -> Bucket 2
-/// - 1024 bytes -> Bucket 3
-/// - 2048 bytes -> Bucket 4
-/// - 4096 bytes -> Bucket 5
-/// - 8192+ bytes -> Bucket 6 (Fallback linked list)
-///
-/// NOTE: Passing sizes `< 128` or non-power-of-2 sizes will result in logic errors
-/// or panics elsewhere in the allocator, as it relies on this exact mapping.
-pub fn find_index(size: &u64) -> u64{
-
-    if *size < 64 {return 0;}
-    
-    let aux = *size >> 7;
-    let index = u64::BITS as u64 - 1 - aux.leading_zeros() as u64;
-
-    index.min(NUMBER_OF_LINKED_LIST-1)
-}
 
 /// The main allocator struct responsible for managing disk space.
 /// 
@@ -57,8 +30,13 @@ pub struct AllocatedStruct<'a>
     pub(crate) tx: Option<&'a mut WalTransaction>,
     pub(crate) file_id: FileId,
     pub(crate) allocator_strategy: AllocatorStrategy<'a>,
+    // This represents the min_size of a block in 2^min_size
+    pub(crate) min_size: AtomicU32,
+    pub(crate) number_link_list: AtomicU32,
 } 
 
+// #TODO Merge allocations
+// #TODO make sure the dealocations for weight works
 impl<'a> AllocatedStruct<'a>
 {
 
@@ -70,9 +48,62 @@ impl<'a> AllocatedStruct<'a>
     /// * `tx` - An optional WAL transaction to record allocations for crash recovery.
     /// * `file_id` - Identifies which specific file (e.g., Structure or Reverse) the allocations belong to.
     pub fn new(file_manager: &'a mut FileManager, super_block: &'a SuperBlock, tx: Option<&'a mut WalTransaction>, file_id: FileId) -> Self{
-        Self{ file_manager, tx, file_id, allocator_strategy: AllocatorStrategy::new(file_id, super_block)}
+        Self{ file_manager, tx, file_id, allocator_strategy: AllocatorStrategy::new(file_id, super_block), min_size: AtomicU32::new(MIN_SIZE), number_link_list: AtomicU32::new(NUMBER_OF_LINKED_LIST)}
     }
 
+
+    // Changes the default min size inside the struct to create specific block sizes for different cases
+    //
+    // # Arguments
+    // * `min_size` - The min size for this allocatedStruct
+    // If u use multiple times the change on min_size, it can cause UB if use incorrectly, this can
+    // happens if the allocator does allocation or deallocation between does 2 changes
+    pub fn change_min_size(&self, min_size: u32){
+        self.min_size.store(min_size, Ordering::Release);
+    }
+
+    pub fn get_min_size(&self) -> u32{
+        self.min_size.load(Ordering::Relaxed)
+    }
+
+    pub fn change_number_link_list(&self, number_link_list: u32){
+        self.number_link_list.store(number_link_list, Ordering::Release);
+    }
+
+    pub fn get_number_link_list(&self) -> u64{
+        self.number_link_list.load(Ordering::Relaxed) as u64
+    }
+
+    /// Determines the appropriate bucket index for a given allocation size.
+    /// 
+    /// # Arguments
+    /// * `size` - The allocation size to find a bucket for. It must be an exact power of 2 starting at 128.
+    ///
+    /// # Design Constraints
+    /// This allocator makes a strict assumption that sizes passed to it are exactly 
+    /// powers of 2, starting from 128 bytes (128, 256, 512, 1024, 2048, 4096, 8192+).
+    /// This perfectly aligns with how `disk_edge` blocks double in size.
+    /// 
+    /// Because of this invariant, `find_index` maps these exact sizes perfectly to buckets:
+    /// - 128 bytes -> Bucket 0
+    /// - 256 bytes -> Bucket 1
+    /// - 512 bytes -> Bucket 2
+    /// - 1024 bytes -> Bucket 3
+    /// - 2048 bytes -> Bucket 4
+    /// - 4096 bytes -> Bucket 5
+    /// - 8192+ bytes -> Bucket 6 (Fallback linked list)
+    ///
+    /// NOTE: Passing sizes `< 128` or non-power-of-2 sizes will result in logic errors
+    /// or panics elsewhere in the allocator, as it relies on this exact mapping.
+    pub fn find_index(&self, size: &u64) -> u64{
+
+        if *size < 64 {return 0;}
+        
+        let aux = *size >> self.min_size.load(Ordering::Relaxed);
+        let index = u64::BITS as u64 - 1 - aux.leading_zeros() as u64;
+
+        index.min(self.get_number_link_list() - 1)
+    }
     /// Fallback bump allocator when free lists are empty.
     ///
     /// # Arguments
@@ -86,7 +117,8 @@ impl<'a> AllocatedStruct<'a>
     /// * `new_offset` - The starting offset of the remainder block to be split.
     /// * `new_cap` - The total capacity of the remainder to distribute into free lists.
     fn split_capacity_into_power_of_2s(&mut self, new_offset: u64, new_cap: u64) -> Result<(), DbError>{
-        let mut cap_div: u64 = new_cap >> 7;
+        let min_size: u64 = self.get_min_size() as u64;
+        let mut cap_div: u64 = new_cap >> min_size;
         let mut padding = 0;
         while cap_div != 0 {
             let index = cap_div.trailing_zeros() as u64;
@@ -96,7 +128,7 @@ impl<'a> AllocatedStruct<'a>
 
             let start_offset = new_offset + padding;
 
-            let chunk_size = 1u64 << (index + 7);
+            let chunk_size = 1u64 << (index + min_size);
             let end_offset = start_offset + chunk_size;
 
             let new_disk_edge: DiskEdge = DiskEdge::new(next_offset, chunk_size, u64::MAX);
@@ -119,7 +151,7 @@ impl<'a> AllocatedStruct<'a>
     fn skip_cur(&mut self, prev_offset: &u64, cur_offset: &u64) -> Result<(), DbError>{
         let cur_disk_edge: DiskEdge = self.read_disk_edge(*cur_offset)?;
         if *prev_offset == u64::MAX{
-            self.allocator_strategy.set_ith_header_list(NUMBER_OF_LINKED_LIST-1, cur_disk_edge.weight_offset);
+            self.allocator_strategy.set_ith_header_list(self.get_number_link_list() - 1, cur_disk_edge.weight_offset);
             return Ok(());
         }
 
@@ -154,9 +186,9 @@ impl<'a> AllocatedStruct<'a>
 
     fn find_smallest_chunk(&self, size: u64) -> u64{
 
-        let mut index: u64 = find_index(&size);
+        let mut index: u64 = self.find_index(&size);
 
-        while index < NUMBER_OF_LINKED_LIST {
+        while index < self.get_number_link_list() {
             if self.allocator_strategy.get_ith_header_list(index) == u64::MAX{
                 index+=1;
                 continue;
@@ -195,7 +227,7 @@ impl<'a> AllocatedStruct<'a>
             let new_disk_edge: DiskEdge = DiskEdge::new(cur_disk_edge.weight_offset, new_cap, cur_disk_edge.node);
 
             self.write_disk_edges(&new_offset, &(new_offset + new_cap), &new_disk_edge)?;
-            let new_index = find_index(&new_cap);
+            let new_index = self.find_index(&new_cap);
 
             self.allocator_strategy.set_ith_header_list(new_index, new_offset);
         }else{
@@ -206,7 +238,7 @@ impl<'a> AllocatedStruct<'a>
     }
 
     fn find_free_space_big_enough(&mut self, size: u64) -> Result<u64, DbError>{
-        let index = NUMBER_OF_LINKED_LIST - 1;
+        let index = self.get_number_link_list() - 1;
         let mut offset = self.allocator_strategy.get_ith_header_list(index);
 
         let mut prev_offset = u64::MAX;
@@ -232,7 +264,7 @@ impl<'a> AllocatedStruct<'a>
         let cap = disk_edge.weight_len;
 
         if cap < size{
-            self.print_error(&disk_edge, size, offset, find_index(&cap));
+            self.print_error(&disk_edge, size, offset, self.find_index(&cap));
             return Err(DbError::AllocatorError);
         }
 
@@ -265,12 +297,12 @@ impl<'a> AllocatedStruct<'a>
     pub fn allocate_structure(&mut self, size: u64) -> Result<u64, DbError>{
 
         let index = self.find_smallest_chunk(size);
-        if index < NUMBER_OF_LINKED_LIST - 1{
+        if index < self.get_number_link_list() - 1{
             let offset = self.remove_head(index)?;
             self.carve_chunk(offset, size)?;
 
             return Ok(offset);
-        }else if index == NUMBER_OF_LINKED_LIST - 1{
+        }else if index == self.get_number_link_list() - 1{
             let offset = self.find_free_space_big_enough(size)?;
 
             if offset != u64::MAX{
@@ -301,7 +333,7 @@ impl<'a> AllocatedStruct<'a>
 
         let end_offset = offset + capacity;
 
-        let index = find_index(&capacity);
+        let index = self.find_index(&capacity);
 
         let next_offset = self.allocator_strategy.get_ith_header_list(index);
         let disk_edge = DiskEdge::new(next_offset, capacity, u64::MAX);
@@ -365,71 +397,56 @@ mod tests {
     // find_index tests
     // ─────────────────────────────────────────────────────────────────────
 
-    #[test]
-    fn find_index_128_returns_bucket_0() {
+    fn find_index_128_returns_bucket_0(all: &AllocatedStruct) {
         // 128 >> 7 = 1, leading_zeros(1) = 63, index = 63 - 63 = 0
-        assert_eq!(find_index(&128), 0);
+        assert_eq!(all.find_index(&128), 0);
     }
 
-    #[test]
-    fn find_index_255_returns_bucket_0() {
-        // 255 >> 7 = 1, same as 128
-        assert_eq!(find_index(&255), 0);
-    }
-
-    #[test]
-    fn find_index_256_returns_bucket_1() {
+    fn find_index_256_returns_bucket_1(all: &AllocatedStruct) {
         // 256 >> 7 = 2, leading_zeros(2) = 62, index = 63 - 62 = 1
-        assert_eq!(find_index(&256), 1);
+        assert_eq!(all.find_index(&256), 1);
     }
 
-    #[test]
-    fn find_index_512_returns_bucket_2() {
+    fn find_index_512_returns_bucket_2(all: &AllocatedStruct) {
         // 512 >> 7 = 4, leading_zeros(4) = 61, index = 63 - 61 = 2
-        assert_eq!(find_index(&512), 2);
+        assert_eq!(all.find_index(&512), 2);
     }
 
-    #[test]
-    fn find_index_1024_returns_bucket_3() {
-        assert_eq!(find_index(&1024), 3);
+    fn find_index_1024_returns_bucket_3(all: &AllocatedStruct) {
+        assert_eq!(all.find_index(&1024), 3);
     }
 
-    #[test]
-    fn find_index_2048_returns_bucket_4() {
-        assert_eq!(find_index(&2048), 4);
+    fn find_index_2048_returns_bucket_4(all: &AllocatedStruct) {
+        assert_eq!(all.find_index(&2048), 4);
     }
 
-    #[test]
-    fn find_index_4096_returns_bucket_5() {
-        assert_eq!(find_index(&4096), 5);
+    fn find_index_4096_returns_bucket_5(all: &AllocatedStruct) {
+        assert_eq!(all.find_index(&4096), 5);
     }
 
-    #[test]
-    fn find_index_8192_returns_bucket_6() {
+    fn find_index_8192_returns_bucket_6(all: &AllocatedStruct) {
         // 8192 >> 7 = 64, leading_zeros(64) = 57, index = 63 - 57 = 6
-        assert_eq!(find_index(&8192), 6);
+        assert_eq!(all.find_index(&8192), 6);
     }
 
-    #[test]
-    fn find_index_very_large_returns_bucket_6() {
-        assert_eq!(find_index(&(1024 * 1024)), 6);
-        assert_eq!(find_index(&(u64::MAX >> 1)), 6);
+    fn find_index_very_large_returns_bucket_6(all: &AllocatedStruct) {
+        assert_eq!(all.find_index(&(1024 * 1024)), 6);
+        assert_eq!(all.find_index(&(u64::MAX >> 1)), 6);
     }
 
-    #[test]
-    fn find_index_boundary_values() {
+    fn find_index_boundary_values(all: &AllocatedStruct) {
         // Check boundaries between buckets
         // Bucket 0: size in [128, 256)
-        assert_eq!(find_index(&128), 0);
-        assert_eq!(find_index(&255), 0);
+        assert_eq!(all.find_index(&128), 0);
+        assert_eq!(all.find_index(&255), 0);
 
         // Bucket 1: size in [256, 512)
-        assert_eq!(find_index(&256), 1);
-        assert_eq!(find_index(&511), 1);
+        assert_eq!(all.find_index(&256), 1);
+        assert_eq!(all.find_index(&511), 1);
 
         // Bucket 2: size in [512, 1024)
-        assert_eq!(find_index(&512), 2);
-        assert_eq!(find_index(&1023), 2);
+        assert_eq!(all.find_index(&512), 2);
+        assert_eq!(all.find_index(&1023), 2);
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -447,6 +464,14 @@ mod tests {
         let mut alloc = AllocatedStruct::new(&mut fm, &mut sb, None, FileId::Structure);
 
         let offset = alloc.allocate_structure(128).unwrap();
+
+        find_index_128_returns_bucket_0(&alloc);
+        find_index_256_returns_bucket_1(&alloc);
+        find_index_512_returns_bucket_2(&alloc);
+        find_index_1024_returns_bucket_3(&alloc);
+        find_index_2048_returns_bucket_4(&alloc);
+        find_index_4096_returns_bucket_5(&alloc);
+        find_index_8192_returns_bucket_6(&alloc);
 
         assert_eq!(offset, 0);
         // Bucket 0 should now be empty (u64::MAX)
@@ -740,7 +765,7 @@ mod tests {
         for &size in &sizes {
             let offset = alloc.allocate_structure(size).unwrap();
             // Verify that find_index mapped perfectly back to the original offsets
-            let _expected_bucket = find_index(&size);
+            let _expected_bucket = alloc.find_index(&size);
             // Because we deallocated, the exact offset should have been returned.
             // Since there was only 1 item per bucket, it's just fine to verify it didn't panic.
             assert_ne!(offset, u64::MAX);

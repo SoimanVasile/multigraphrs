@@ -94,9 +94,13 @@ fn check_node_allocated(disk_node: &DiskNode, file_id: FileId) -> Result<bool, D
 ///
 /// # Panics
 /// Panics if the underlying memory allocation fails.
-fn allocate_memory(file_manager: &mut FileManager, super_block: &mut SuperBlock, tx: Option<&mut WalTransaction>, file_id: FileId, size: u64) -> Result<u64, DbError>{
+fn allocate_memory(file_manager: &mut FileManager, super_block: &SuperBlock, tx: Option<&mut WalTransaction>, file_id: FileId, size: u64) -> Result<u64, DbError>{
     
         let mut alloc = AllocatedStruct::new(file_manager, super_block, tx, file_id);
+        if file_id == FileId::Data{
+            alloc.change_min_size(7);
+            alloc.change_number_link_list(3);
+        }
         alloc.allocate_structure(size)
 }
 
@@ -527,20 +531,23 @@ where
     ///
     /// # Panics
     /// Panics if the write region exceeds the data memory map bounds.
-    pub fn write_weight(&mut self, weight_data_bytes: &[u8], weight_offset: &u64, mut tx: Option<&mut WalTransaction>) -> Result<(), DbError>{
+    pub fn write_weight(&mut self, weight_data_bytes: &[u8], super_block: &SuperBlock,mut tx: Option<&mut WalTransaction>) -> Result<u64, DbError>{
+        // #TODO find the weight size necessary for the bytes
 
-        while *weight_offset + weight_data_bytes.len() as u64 > self.file_manager_weight_data.file_len()?{
+        let weight_offset = { allocate_memory(&mut self.file_manager_weight_data, super_block, tx.as_deref_mut(), FileId::Data, 128)}?;
+
+        while weight_offset + weight_data_bytes.len() as u64 > self.file_manager_weight_data.file_len()?{
             if let Some(ref mut t) = tx { t.increase_file_size(FileId::Data, self.file_manager_weight_data.check_next_size(self.file_manager_weight_data.file_len()?)?); }
             self.file_manager_weight_data.increase_file_size()?;
         }
 
         if let Some(t) = tx {
-            t.write_bytes(FileId::Data, *weight_offset, weight_data_bytes);
+            t.write_bytes(FileId::Data, weight_offset, weight_data_bytes);
         } else {
-            self.file_manager_weight_data.writing_bytes_to_mmap(*weight_offset, *weight_offset + weight_data_bytes.len() as u64, weight_data_bytes)?;
+            self.file_manager_weight_data.writing_bytes_to_mmap(weight_offset, weight_offset + weight_data_bytes.len() as u64, weight_data_bytes)?;
         }
 
-        Ok(())
+        Ok(weight_offset)
     }
     /// Persists the [`SuperBlock`] to the beginning of the node memory map.
     ///
@@ -877,8 +884,12 @@ where
 
         let weight_data_bytes: &[u8] = &edge.weight.as_disk_bytes();
 
-        let data_offset = super_block.next_free_block_data(weight_data_bytes.len() as u64);
-        let disk_edge: DiskEdge = DiskEdge::new(data_offset, weight_data_bytes.len() as u64 , edge.get_target());
+        let weight_offset = self.write_weight(weight_data_bytes, &super_block, Some(&mut tx)).map_err(|e| {
+            self.poison();
+            GraphError::Db(e)
+        })?;
+
+        let disk_edge: DiskEdge = DiskEdge::new(weight_offset, weight_data_bytes.len() as u64 , edge.get_target());
 
         self.write_disk_edge(&mut disk_node, &disk_edge, &mut super_block, Some(&mut tx)).map_err(|e| {
             self.poison();
@@ -886,10 +897,6 @@ where
         })?;
         
 
-        self.write_weight(weight_data_bytes, &data_offset, Some(&mut tx)).map_err(|e| {
-            self.poison();
-            GraphError::Db(e)
-        })?;
 
         super_block.increment_edge_counter();
         
@@ -929,18 +936,17 @@ where
 
             let weight_data_bytes: &[u8] = &edge.weight.as_disk_bytes();
 
-            let data_offset = super_block.next_free_block_data(weight_data_bytes.len() as u64);
-            let disk_edge: DiskEdge = DiskEdge::new(data_offset, weight_data_bytes.len() as u64, edge.get_target());
+            let weight_offset = self.write_weight(weight_data_bytes, &super_block, Some(&mut tx)).map_err(|e| {
+                self.poison();
+                GraphError::Db(e)
+            })?;
+            let disk_edge: DiskEdge = DiskEdge::new(weight_offset, weight_data_bytes.len() as u64, edge.get_target());
 
             self.write_disk_edge(&mut disk_node, &disk_edge, &mut super_block, Some(&mut tx)).map_err(|e| {
                 self.poison();
                 GraphError::Db(e)
             })?;
             
-            self.write_weight(weight_data_bytes, &data_offset, Some(&mut tx)).map_err(|e| {
-                self.poison();
-                GraphError::Db(e)
-            })?;
 
             super_block.increment_edge_counter();
             
