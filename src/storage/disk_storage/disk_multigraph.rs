@@ -98,7 +98,7 @@ fn allocate_memory(file_manager: &mut FileManager, super_block: &SuperBlock, tx:
     
         let mut alloc = AllocatedStruct::new(file_manager, super_block, tx, file_id);
         if file_id == FileId::Data{
-            alloc.change_min_size(7);
+            alloc.change_min_size(6);
             alloc.change_number_link_list(3);
         }
         alloc.allocate_structure(size)
@@ -534,7 +534,8 @@ where
     pub fn write_weight(&mut self, weight_data_bytes: &[u8], super_block: &SuperBlock,mut tx: Option<&mut WalTransaction>) -> Result<u64, DbError>{
         // #TODO find the weight size necessary for the bytes
 
-        let weight_offset = { allocate_memory(&mut self.file_manager_weight_data, super_block, tx.as_deref_mut(), FileId::Data, 128)}?;
+        let weight_size = (weight_data_bytes.len() as u64).max(64).next_power_of_two();
+        let weight_offset = { allocate_memory(&mut self.file_manager_weight_data, super_block, tx.as_deref_mut(), FileId::Data, weight_size)}?;
 
         while weight_offset + weight_data_bytes.len() as u64 > self.file_manager_weight_data.file_len()?{
             if let Some(ref mut t) = tx { t.increase_file_size(FileId::Data, self.file_manager_weight_data.check_next_size(self.file_manager_weight_data.file_len()?)?); }
